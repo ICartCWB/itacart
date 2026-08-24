@@ -1,19 +1,157 @@
-# ITACaRT - v0.1.0a3
+# ITACaRT
 
-**PyPI package name reserved. This is a placeholder for the official reference implementation.**
+**ITA Cadastral Ellipsoidal Reference Tessellation** — an equal-area parallelogram
+Discrete Global Grid System (DGGS) for terrestrial cadastral mapping, tessellated
+directly on the WGS84 ellipsoid.
 
-ITACaRT (ITA Cadastral Ellipsoidal Reference Tessellation) is an equal-area parallelogram Discrete Global Grid System (DGGS) designed for terrestrial cadastral mapping, usability, and blockchain integration.
+[![PyPI](https://img.shields.io/pypi/v/itacart)](https://pypi.org/project/itacart/)
+[![DOI](https://img.shields.io/badge/DOI-10.14393%2Frbcv77n0a--79281-blue)](https://doi.org/10.14393/rbcv77n0a-79281)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-This project was developed at the Technological Institute of Aeronautics (ITA) and is detailed in the scientific paper:
+> **Status:** alpha. The public API is defined and documented; implementations are
+> landing module by module.
 
-> [Silva, I. N., Shiguemori, E. H., & Dietzsch, G. (2025). *Designing a parallelogram Discrete Global Grid System for terrestrial cadastral mapping.*](http://mtc-m16c.sid.inpe.br/col/sid.inpe.br/mtc-m16c/2025/06.04.13.53/doc/thisInformationItemHomePage.html)
+## What makes it different
 
-The full conceptual methodology can be found in the article. This package will host the future reference implementation, including algorithms for coordinate transformations, indexing, and topological queries as outlined in the "Future Work" section of the paper.
+Most DGGS project a polyhedron onto a sphere. ITACaRT tessellates the WGS84
+ellipsoid directly, trading computational convenience for geodetic fidelity —
+the trade that cadastral work actually needs, since parcel area carries legal
+and fiscal weight.
 
-### Key Features (as per design)
-- **Purpose-Oriented:** Designed for cadastral mapping needs.
-- **Equal-Area Cells:** Ensures uniform cell sizes based on a sinusoidal projection on the ellipsoid.
-- **GNSS Compatibility:** Based on the WGS84 ellipsoid with resolutions down to 1 cm.
-- **Compositional Hierarchical Indexing:** A human-readable index designed to represent complex vector features.
+- **Equal-area cells** everywhere except at controlled antemeridian exceptions
+- **Decimal hierarchy** — 14 levels from 10 km to 1 cm, with whole-number metric
+  areas (1 km², 100 m², 1 cm²) that make one token equal one unit of area
+- **Cartesian-like addressing** so surveyors can work with it without
+  relearning their intuitions
+- **Compositional index** that represents a whole vector feature in one string
+  instead of an unstructured list of atomic identifiers
 
-**Stay tuned for future development!**
+## Install
+
+```bash
+pip install itacart
+```
+
+Optional extras:
+
+```bash
+pip install "itacart[geo]"       # GeoDataFrame export
+pip install "itacart[parallel]"  # parallel cell filling
+```
+
+`shapely` is the only hard runtime dependency. The ellipsoidal sinusoidal
+projection is computed directly from the paper's equations, so PROJ is never
+called at runtime.
+
+## Quick start
+
+```python
+import itacart
+
+# Address a position at 1 cm resolution
+cell = itacart.geo_to_cell(-46.6328862, -23.5508962, resolution=13)
+
+# Inverse geometry
+lon, lat = itacart.cell_to_centroid(cell)
+ring = itacart.cell_to_boundary(cell, close=True)
+
+# Hierarchy
+parent = itacart.get_parent(cell)
+children = list(itacart.get_children(parent))   # 25 at odd resolutions
+
+# Topology
+neighbours = itacart.grid_disk(cell, k_distance=1)
+
+# Vector features
+from shapely.geometry import Polygon
+parcel = Polygon([...])
+index = itacart.polyfill(parcel, resolution=13, compact=True)
+area_m2 = itacart.count_internal_cells(parcel, 13) * itacart.nominal_cell_area(13)
+```
+
+## Compositional indices
+
+A single string addresses one cell or a whole region:
+
+```
+SE(1400/0374(3(C2(3))))              one cell
+...4(C1,C2)                          two siblings under one parent
+```
+
+Parentheses descend a level; commas separate siblings. Every function accepts
+this form. Functions returning one value per cell return a list aligned with
+`decompose()` order:
+
+```python
+region = "NE(0001/0002(1(A1,A2,A3)))"
+itacart.count_cells(region)          # 3
+itacart.get_parent(region)           # 3 entries, positionally aligned
+itacart.grid_disk(region)            # 3 lists, one per input cell
+```
+
+## Boundary behaviour
+
+Three departures from the uniform grid are part of the specification, not
+edge cases to be handled later:
+
+| Condition | Cell shape | Equal area |
+|---|---|---|
+| Interior | Parallelogram | Yes |
+| Prime meridian | Isosceles triangle | Yes |
+| Antemeridian / extension edge | Trapezoid | **No** |
+
+Because trapezoidal cells break the area guarantee, area queries distinguish
+nominal from effective:
+
+```python
+itacart.nominal_cell_area(13)        # 0.0001 m² — the Table 1 value
+itacart.effective_cell_area(cell)    # actual area, clipping accounted for
+itacart.is_equal_area_cell(cell)     # gate area-sensitive computations on this
+```
+
+Two extension zones carry the eastern quadrants across 180° over inhabited
+land — Fiji and the Chukotka/Wrangel group. Antarctica is excluded.
+
+```python
+itacart.extension_zone(cell)         # "FIJI" | "CHUKOTKA" | None
+```
+
+## Resolutions
+
+| Res | Edge | Area | Refinement | Codes | Visualization | Analysis |
+|----:|------|------|-----------:|-------|---------------|----------|
+| 1 | 10 km | 100 km² | base | `0000/0000` | 1:100 000 000 | 1:20 000 000 |
+| 3 | 1 km | 1 km² | 1→25 | `A1`–`E5` | 1:10 000 000 | 1:2 000 000 |
+| 9 | 1 m | 1 m² | 1→25 | `A1`–`E5` | 1:10 000 | 1:2 000 |
+| 13 | 1 cm | 1 cm² | 1→25 | `A1`–`E5` | 1:100 | 1:20 |
+
+Even resolutions refine 1→4, odd resolutions 1→25. Full table via
+`itacart.resolution_table()`.
+
+## OGC conformance
+
+ITACaRT meets DGGS Core (Topic 21 / ISO 19170-1) in full and EAERS partially.
+The divergences are deliberate: direct surface tessellation rules out the
+polyhedral interface, and the antemeridian trapezoids are accepted so the grid
+covers inhabited land. `itacart.conformance()` reports the full table, and the
+conformance test suite verifies it in CI.
+
+## Citing
+
+```bibtex
+@article{silva2025itacart,
+  author  = {Silva, Israel Nunes da and Dietzsch, Gabriel
+             and Shiguemori, Elcio Hideiti},
+  title   = {{ITACaRT}: An Equal-Area Parallelogram Discrete Global Grid System
+             for Terrestrial Cadastral Mapping---Designed for Usability and
+             Blockchain Integration},
+  journal = {Revista Brasileira de Cartografia},
+  volume  = {77},
+  year    = {2025},
+  doi     = {10.14393/rbcv77n0a-79281}
+}
+```
+
+## License
+
+MIT. See [LICENSE](LICENSE).

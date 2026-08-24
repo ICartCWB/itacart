@@ -1,0 +1,64 @@
+"""Shared pytest fixtures.
+
+Reference points and indices transcribed from the paper and from the
+Colab prototype, so the suite pins behaviour against published values.
+"""
+
+from __future__ import annotations
+
+import sys
+
+import pytest
+
+# Windows dev environment: a corrupt cert in the store can break aiohttp
+# imports pulled in by optional geo dependencies.
+if sys.platform == "win32":  # pragma: no cover
+    import ssl
+
+    ssl.SSLContext._load_windows_store_certs = (  # type: ignore[method-assign]
+        lambda self, storename, purpose: []
+    )
+
+
+@pytest.fixture
+def sydney_opera_house() -> tuple[float, float]:
+    """(lon, lat) of the Sydney Opera House."""
+    return (151.2150784, -33.8567529)
+
+
+@pytest.fixture
+def liberty_statue() -> tuple[float, float]:
+    """(lon, lat) of the Statue of Liberty."""
+    return (-74.0445142, 40.6892077)
+
+
+@pytest.fixture
+def praca_da_se() -> tuple[float, float]:
+    """(lon, lat) of Praca da Se, Sao Paulo."""
+    return (-46.6328862, -23.5508962)
+
+
+@pytest.fixture
+def central_park_index() -> str:
+    """Figure 7 of the paper: compositional fill at resolutions 6 and 7."""
+    return (
+        "NW(0625/0451(1(E1(3(B2(4(A2,B2,B3,B4,C2,C3,C4,C5,D1,D2,D3,D4,"
+        "D5,E1,E2,E3,E4,E5)),B3(3(C1,D1,D2,E1,E2,E3,E4)),C2(1(A5,B5,C5,"
+        "D4,D5,E4,E5),2,3(A4,A5,B3,B4,B5,C3,C4,C5,D2,D3,D4,D5,E2,E3,E4,"
+        "E5),4),C3(1,2(A1,B1,B2,B3,C1,C2,C3,C4,D1,D2,D3,D4,E1,E2,E3,E4,"
+        "E5),3,4),D2(1(A1,A2,A3,A4,A5,B2,B3,B4,B5,C3,C4,C5,D5),2,4(A3,"
+        "A4,A5,B5)),D3(1,2,3(A1,A2,A3,A4,A5,B1,B2,B3,B4,B5,C2,C3,C4,C5,"
+        "D4,D5),4),D4(1(D1,E1),3(A1,B1,C1,D1,E1)))))))"
+    )
+
+
+@pytest.fixture
+def sydney_cell() -> str:
+    """Atomic index for the Sydney Opera House, resolution 9."""
+    return "SE(1400/0374(3(C2(3(C2(4(C1)))))))"
+
+
+@pytest.fixture
+def paper_example_index() -> str:
+    """The index string used as an example in section 3.1 of the paper."""
+    return "SE(1400/0374(3(C2(3))))"

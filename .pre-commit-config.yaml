@@ -1,18 +1,75 @@
+# Portao de qualidade local, espelhando o job de lint do CI.
+# Disciplina: 00_README_Orientacao.md, "Disciplina de codigo".
+#
+# Instalacao:
+#     pip install pre-commit
+#     pre-commit autoupdate      # fixa as versoes correntes
+#     pre-commit install
+#     pre-commit run --all-files # primeira passada, formata o que faltar
+#
+# As versoes abaixo sao um ponto de partida. Rode `pre-commit autoupdate`
+# antes do primeiro uso para que elas reflitam o que esta publicado hoje.
+
+default_language_version:
+  python: python3.11
+
 repos:
--   repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.6.0
+  # -- Higiene basica de arquivo -------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
     hooks:
-    -   id: trailing-whitespace
-    -   id: end-of-file-fixer
-    -   id: check-yaml
-    -   id: check-toml
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=2048]
+      - id: debug-statements
 
--   repo: https://github.com/psf/black
-    rev: 24.8.0
+  # -- Formatacao -----------------------------------------------------------
+  - repo: https://github.com/psf/black
+    rev: 26.5.1
     hooks:
-    -   id: black
+      - id: black
 
--   repo: https://github.com/PyCQA/isort
-    rev: 5.13.2
+  - repo: https://github.com/PyCQA/isort
+    rev: 9.0.0b5
     hooks:
-    -   id: isort
+      - id: isort
+
+  # -- Lint -----------------------------------------------------------------
+  # Se o repositorio ja tiver .flake8 ou setup.cfg com [flake8], APAGUE o
+  # bloco `args` abaixo: duas fontes de configuracao divergem em silencio.
+  - repo: https://github.com/PyCQA/flake8
+    rev: 7.3.0
+    hooks:
+      - id: flake8
+        args: ["--max-line-length=88", "--extend-ignore=E203,W503"]
+
+  # -- Tipos ----------------------------------------------------------------
+  # Espelha `mypy src` do criterio 2. Restrito a src/ de proposito: os testes
+  # sao verificados a parte, e nao devem bloquear commit de codigo.
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.3.1
+    hooks:
+      - id: mypy
+        args: [--strict]
+        files: ^src/
+        additional_dependencies:
+          - shapely>=2.0
+
+  # -- Testes ---------------------------------------------------------------
+  # A suite da F0 roda em menos de um segundo. Se ficar lenta em fases
+  # adiantadas, mova para `stages: [pre-push]` ou remova este bloco.
+  - repo: local
+    hooks:
+      - id: pytest-unit
+        name: pytest (tests/unit)
+        entry: pytest tests/unit -q
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]
