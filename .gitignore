@@ -20,3 +20,4 @@ docs/source/api/_autosummary/
 .vscode/
 *.pdf
 *.ipynb
+notebooks/

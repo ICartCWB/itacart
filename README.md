@@ -140,7 +140,7 @@ conformance test suite verifies it in CI.
 
 ```bibtex
 @article{silva2025itacart,
-  author  = {Silva, Israel Nunes da and Dietzsch, Gabriel
+  author  = {Silva, Israel Nunes and Dietzsch, Gabriel
              and Shiguemori, Elcio Hideiti},
   title   = {{ITACaRT}: An Equal-Area Parallelogram Discrete Global Grid System
              for Terrestrial Cadastral Mapping---Designed for Usability and
