@@ -21,3 +21,5 @@ docs/source/api/_autosummary/
 *.pdf
 *.ipynb
 notebooks/
+docs/source/api/generated/
+docs/source/_generated/

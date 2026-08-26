@@ -80,14 +80,15 @@ def test_criterion_1_roundtrip_global_grid() -> None:
 def test_criterion_2_meridian_quadrant_matches_published_value() -> None:
     """meridian_arc(90) reproduces the WGS84 meridian quadrant.
 
-    The published constant carries three decimals, so it is itself rounded
-    to the millimetre. The comparison is therefore against half of its last
-    digit (5e-4 m), not against the 1e-4 m of the phase brief, which is
-    finer than the target is stated. See handoff section 7.
+    The target is the GeographicLib value, carried to full double
+    precision so that the comparison measures the series rather than the
+    rounding of a three-decimal literal. One micrometre is the stated
+    tolerance; the observed gap is a thousand times smaller than that,
+    and equal to one unit in the last place of a float64 at this
+    magnitude, which is the floor of what double precision can express.
     """
     computed = geodesy.meridian_arc(90.0)
-    assert abs(computed - MERIDIAN_QUADRANT) < 5e-4
-    assert round(computed, 3) == MERIDIAN_QUADRANT
+    assert abs(computed - MERIDIAN_QUADRANT) < 1e-6
 
 
 def test_criterion_2_quadrant_is_computed_not_read() -> None:

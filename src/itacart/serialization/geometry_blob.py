@@ -6,21 +6,21 @@ when a geometry must be identified rather than merely covered.
 
 Header layout, 9 bytes:
 
-===========  ====  ==============================  ==========================
-Byte(s)      Bits  Field                           Values
-===========  ====  ==============================  ==========================
-``0x00``        8  Magic                           ``0xC8``
-``0x01``        8  Format version                  ``0x01``
-``0x02`` hi     4  Canonical profile               ``0x0`` MIN_LEX_CYCLIC_ROTATION
-``0x02`` lo     4  Edge model                      ``0x1`` WGS84_GEODESIC
-``0x03`` hi     4  Densification model             ``0x1`` ORTHODROMIC_VINCENTY,
-                                                   ``0x2`` ASSUMED_BY_PRODUCER
-``0x03`` lo     4  Resolution mode                 ``0x0`` UNIFORM
-``0x04``-``05``16  ``max_segment_m``               ``0x03E8`` = 1000 m
-``0x06`` hi     4  Uniform resolution              ``0xD`` = res 13
-``0x06`` lo     4  Geometry type (OGC SFA)         ``0x0`` POINT .. ``0x5`` MULTIPOLYGON
-``0x07``-``08``16  ``n_components``                1 for single, N for MULTI*
-===========  ====  ==============================  ==========================
+=================  ====  =======================  =====================================
+Byte(s)            Bits  Field                    Values
+=================  ====  =======================  =====================================
+``0x00``           8     Magic                    ``0xC8``
+``0x01``           8     Format version           ``0x01``
+``0x02`` hi        4     Canonical profile        ``0x0`` MIN_LEX_CYCLIC_ROTATION
+``0x02`` lo        4     Edge model               ``0x1`` WGS84_GEODESIC
+``0x03`` hi        4     Densification model      ``0x1`` ORTHODROMIC_VINCENTY,
+                                                  ``0x2`` ASSUMED_BY_PRODUCER
+``0x03`` lo        4     Resolution mode          ``0x0`` UNIFORM
+``0x04``-``0x05``  16    ``max_segment_m``        ``0x03E8`` = 1000 m
+``0x06`` hi        4     Uniform resolution       ``0xD`` = res 13
+``0x06`` lo        4     Geometry type (OGC SFA)  ``0x0`` POINT .. ``0x5`` MULTIPOLYGON
+``0x07``-``0x08``  16    ``n_components``         1 for single, N for MULTI*
+=================  ====  =======================  =====================================
 
 Components, parts and rings follow, then the vertex stream. Vertices are
 delta-encoded by ``shared_levels``, the count of hierarchy levels a vertex

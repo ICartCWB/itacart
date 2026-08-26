@@ -52,12 +52,17 @@ WGS84_E: Final[float] = math.sqrt(WGS84_E2)
 WGS84_EP2: Final[float] = WGS84_E2 / (1.0 - WGS84_E2)
 """Second eccentricity squared, ``e^2 / (1 - e^2)``. Used by the meridian arc."""
 
-MERIDIAN_QUADRANT: Final[float] = 10001965.729
+# D-1.10: source is GeographicLib, read through
+# pyproj.Geod(ellps="WGS84").inv(0, 0, 0, 90). Deliberately NOT the value our
+# own series computes: the point of this constant is to be an independent
+# target, and seeding it from our arithmetic would make F1 compare the code
+# against itself.
+MERIDIAN_QUADRANT: Final[float] = 10001965.729312724
 """Meridian quadrant of the WGS84 ellipsoid, in metres.
 
-Literal value of the standard, kept fixed on purpose so that F1 has an
-independent target: ``meridian_arc(90 deg)`` must reproduce it from
-Eq. (2) rather than read it back from here.
+External literal, kept fixed on purpose so that F1 has an independent
+target: ``meridian_arc(90 deg)`` must reproduce it from Eq. (2) rather
+than read it back from here.
 """
 
 EQUATOR_QUADRANT: Final[float] = math.pi * WGS84_A

@@ -39,9 +39,13 @@ mapping, tessellated directly on the WGS84 ellipsoid.
    api/engine
 
 .. toctree::
-   :maxdepth: 1
-   :caption: Project
+   :maxdepth: 2
+   :caption: Contents
 
+   concepts/index
+   api/index
+   _generated/figures/index
+   building
    changelog
    citing
 
