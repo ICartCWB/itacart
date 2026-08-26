@@ -26,3 +26,4 @@ docs/source/_generated/
 *.egg-info/
 docs/warnings.txt
 _build/
+docs/project/

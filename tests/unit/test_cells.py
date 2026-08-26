@@ -1,8 +1,728 @@
-"""Tests for :mod:`itacart.cells`."""
+"""Unit tests for :mod:`itacart.cells`.
+
+Covers acceptance criteria 1, 2, 3, 4, 5, 8 and 9 of F3.
+
+Two measurement notes, both learned the hard way while writing these.
+
+**Areas are measured locally.** The shoelace of a resolution-13 ring in
+absolute plane coordinates is pure cancellation: the coordinates are
+around 1e7 m and the side is 0.01 m, so the products are around 1e14 and
+the answer around 1e-4. Every ring is therefore shifted to its own anchor
+before its area is taken. Measuring wrong here would have looked exactly
+like a broken cell.
+
+**Orientation is measured on the plane, not on lon/lat.** The plane is
+where the cell is a true parallelogram; the sign of the geodetic shoelace
+happens to agree for small cells but that is a coincidence of scale, not
+a property.
+"""
 
 from __future__ import annotations
 
-import itacart  # noqa: F401
+import math
+import time
 
-# TODO: portar testes de itacart_core/tests (406 casos) e adicionar
-# cobertura para fronteira, vizinhanca e canonizacao.
+import pytest
+
+from itacart import cells
+from itacart.cells import FLOOR_EPSILON_M, _anchor_on_plane, _from_path
+from itacart.constants import RES1_MAX_INDEX
+from itacart.exceptions import (
+    AntemeridianError,
+    DomainError,
+    InvalidIndexError,
+    NonExistentCellError,
+    ResolutionError,
+)
+from itacart.geodesy import geodetic_to_sinusoidal
+from itacart.index import decompose, split_components
+from itacart.resolutions import cell_size, nominal_cell_area
+
+RESOLUTIONS = tuple(range(1, 14))
+
+# One interior position per quadrant, far from every axis.
+QUADRANT_POINTS = {
+    "NE": (13.0, 42.0),  # Italian peninsula
+    "NW": (-73.9665, 40.7812),  # Central Park, Figure 7
+    "SE": (151.2150784, -33.8567529),  # Sydney Opera House
+    "SW": (-46.6328862, -23.5508962),  # Praca da Se
+}
+
+
+def local_shoelace(ring: list[tuple[float, float]]) -> float:
+    """Signed area of a ring, computed relative to its first vertex."""
+    origin_x, origin_y = ring[0]
+    shifted = [(x - origin_x, y - origin_y) for x, y in ring]
+    count = len(shifted)
+    return 0.5 * math.fsum(
+        shifted[i][0] * shifted[(i + 1) % count][1]
+        - shifted[(i + 1) % count][0] * shifted[i][1]
+        for i in range(count)
+    )
+
+
+def plane_ring(cell: str) -> list[tuple[float, float]]:
+    """Geodetic boundary of a cell, projected back onto the plane."""
+    ring = cells.cell_to_boundary(cell)
+    return [geodetic_to_sinusoidal(lon, lat) for lon, lat in ring]
+
+
+# ==========================================================================
+# Criterion 1 -- round trip through the anchor
+# ==========================================================================
+
+
+@pytest.mark.parametrize("resolution", RESOLUTIONS)
+@pytest.mark.parametrize("quadrant", sorted(QUADRANT_POINTS))
+def test_criterion_1_the_anchor_requantizes_to_its_own_cell(
+    resolution: int, quadrant: str
+) -> None:
+    """The property the 1 um floor epsilon exists to buy.
+
+    Without the epsilon the anchor, which sits exactly on two grid lines,
+    floors back into the previous cell and the identity fails at every
+    resolution.
+    """
+    lon, lat = QUADRANT_POINTS[quadrant]
+    cell = cells.geo_to_cell(lon, lat, resolution)
+    anchor_lon, anchor_lat = cells.cell_to_anchor(cell)
+    assert cells.geo_to_cell(anchor_lon, anchor_lat, resolution) == cell
+
+
+@pytest.mark.parametrize("resolution", RESOLUTIONS)
+def test_criterion_1_projection_noise_stays_far_below_the_epsilon(
+    resolution: int,
+) -> None:
+    """The margin, measured rather than assumed.
+
+    The epsilon is only safe while the projection round trip is much
+    quieter than it. This pins the ratio so that a future change to the
+    geodesy that degrades the round trip fails here, loudly, instead of
+    silently eating the margin.
+    """
+    worst = 0.0
+    for lon, lat in QUADRANT_POINTS.values():
+        cell = cells.geo_to_cell(lon, lat, resolution)
+        exact_x, exact_y = _anchor_on_plane(cell)[:2]
+        anchor_lon, anchor_lat = cells.cell_to_anchor(cell)
+        back_x, back_y = geodetic_to_sinusoidal(anchor_lon, anchor_lat)
+        worst = max(worst, math.hypot(back_x - exact_x, back_y - exact_y))
+    assert worst < FLOOR_EPSILON_M / 10.0
+
+
+@pytest.mark.parametrize("resolution", RESOLUTIONS)
+@pytest.mark.parametrize("quadrant", sorted(QUADRANT_POINTS))
+def test_criterion_1_the_reference_cells_are_not_on_a_quadrant_axis(
+    resolution: int, quadrant: str
+) -> None:
+    """The scoping of criterion 1, asserted rather than assumed.
+
+    The criterion holds for cells off the quadrant axes (``D-3.91``). If
+    a reference point ever drifted onto an axis, the criterion-1 test
+    above would start passing vacuously; this makes that impossible.
+    """
+    lon, lat = QUADRANT_POINTS[quadrant]
+    cell = cells.geo_to_cell(lon, lat, resolution)
+    assert cells.is_quadrant_boundary_cell(cell) is False
+
+
+# --------------------------------------------------------------------------
+# B-3.1 -- open, inherited by F4. Behaviour pinned, not fixed.
+# --------------------------------------------------------------------------
+
+QUADRANT_CODES = ("NE", "NW", "SE", "SW")
+ENUMERATED_COLUMNS = range(0, 400)
+
+
+def enumerate_row(template: str) -> dict[str, int]:
+    """Requantize the anchor of every cell in a base-index family.
+
+    Enumeration, not sampling: the boundary families have effectively
+    zero measure, so drawing random positions finds them by luck and
+    reports a count that means nothing (``D-3.91``).
+    """
+    tally = {"round_trip": 0, "mirror_collision": 0, "prime_meridian": 0, "domain": 0}
+    for quadrant in QUADRANT_CODES:
+        for column in ENUMERATED_COLUMNS:
+            cell = template.format(quadrant=quadrant, k=column)
+            try:
+                anchor = cells.cell_to_anchor(cell)
+                back = cells.geo_to_cell(anchor[0], anchor[1], 1)
+            except NonExistentCellError:
+                tally["prime_meridian"] += 1
+            except DomainError:
+                tally["domain"] += 1
+            else:
+                key = "round_trip" if back == cell else "mirror_collision"
+                tally[key] += 1
+    return tally
+
+
+def test_b_3_1_the_equator_row_collides_with_its_mirror() -> None:
+    """Every southern ``Y = 0000`` cell requantizes to its northern twin.
+
+    Reflection in the x axis turns a southern cell's lower-left vertex
+    into its northern extremity, so ``SE(X/0000)`` and ``NE(X/0000)``
+    report the same geodetic position. Exactly half the enumerated cells
+    collide -- the southern half, all of them, deterministically. The
+    four refusals are ``X = 0000``, which is the prime-meridian column.
+    """
+    tally = enumerate_row("{quadrant}({k:04d}/0000)")
+    assert tally == {
+        "round_trip": 798,
+        "mirror_collision": 798,
+        "prime_meridian": 4,
+        "domain": 0,
+    }
+
+
+def test_b_3_1_the_prime_meridian_column_is_refused_outright() -> None:
+    """``X = 0000`` never reaches the tie-break: F3 refuses it first."""
+    tally = enumerate_row("{quadrant}(0000/{k:04d})")
+    assert tally["prime_meridian"] == 1600
+    assert tally["mirror_collision"] == 0
+
+
+def test_b_3_2_the_polar_row_addresses_cells_that_do_not_exist() -> None:
+    """B-3.2, and the reason it is not a mirror problem at all.
+
+    Row ``Y = 1000`` sits at latitude 89.98 degrees, where the parallel
+    circle is about 6 km long -- shorter than one 10 km cell. Every
+    ``X >= 1`` there projects to a longitude outside ``[-180, 180]``. The
+    row does not collide; it is empty.
+    """
+    tally = enumerate_row("{quadrant}({k:04d}/1000)")
+    assert tally["domain"] == 1596
+    assert tally["prime_meridian"] == 4
+    assert tally["mirror_collision"] == 0
+
+
+def test_b_3_2_the_resolution_one_index_space_is_not_a_rectangle() -> None:
+    """``RES1_MAX_INDEX`` names a bounding-box corner, not a cell.
+
+    The addressable ``X`` range shrinks with ``cos(phi)``: 2003 columns
+    at the equator, 313 at row 900, none at row 1000. Table 1 gives the
+    range as ``0000/0000`` to ``2003/1000``, which is the bounding box of
+    a sinusoidal region rather than the region itself.
+
+    The anchor is still *computable* -- the inverse shear and the inverse
+    projection are total functions -- which is what makes this quiet. It
+    is the longitude that leaves the planet.
+    """
+    corner_lon, _ = cells.cell_to_anchor(f"NE({RES1_MAX_INDEX})")
+    assert abs(corner_lon) > 180.0
+    with pytest.raises(DomainError, match="outside"):
+        cells.geo_to_cell(corner_lon, 89.98, 1)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="B-3.1, open and owned by F4 (D-3.91): on a quadrant axis two "
+    "cells share one anchor and no tie-break satisfies both. When F4 "
+    "resolves it this test flips to XPASS and must be rewritten.",
+)
+def test_b_3_1_criterion_1_would_hold_on_the_equator_row() -> None:
+    cell = "SW(0518/0000)"
+    anchor = cells.cell_to_anchor(cell)
+    assert cells.geo_to_cell(anchor[0], anchor[1], 1) == cell
+
+
+def test_is_quadrant_boundary_cell_flags_both_axes() -> None:
+    assert cells.is_quadrant_boundary_cell("SW(0518/0000)") is True
+    assert cells.is_quadrant_boundary_cell("NE(0000/0400)") is True
+    assert cells.is_quadrant_boundary_cell("NE(0518/0400)") is False
+
+
+def test_is_quadrant_boundary_cell_looks_at_the_anchor_not_the_base_pair() -> None:
+    """A refined cell inherits the axis only if its own anchor sits on it.
+
+    Child ``1`` of a ``Y = 0000`` cell keeps the parent's anchor and is
+    still on the equator; child ``4`` is offset upward and is not.
+    """
+    assert cells.is_quadrant_boundary_cell("SW(0518/0000(1))") is True
+    assert cells.is_quadrant_boundary_cell("SW(0518/0000(4))") is False
+
+
+def test_is_quadrant_boundary_cell_is_vectorised() -> None:
+    flags = cells.is_quadrant_boundary_cell("SW(0518/0000(1,4))")
+    assert flags == [True, False]
+
+
+def test_resolution_zero_has_no_anchor() -> None:
+    """D-3.7. ``"NE"`` is a valid index; the operation is what fails.
+
+    Claiming ``InvalidIndexError`` would assert malformation, which
+    ``D-2.3`` says is false. ``ResolutionError`` names exactly this case
+    -- invalid for the operation -- and matches how
+    :mod:`itacart.resolutions` already answers resolution 0.
+    """
+    with pytest.raises(ResolutionError, match="whole quadrant"):
+        cells.cell_to_anchor("NE")
+    assert not isinstance(
+        pytest.raises(ResolutionError, cells.cell_to_anchor, "NE").value,
+        InvalidIndexError,
+    )
+
+
+# ==========================================================================
+# Criterion 2 -- four vertices, counter-clockwise
+# ==========================================================================
+
+
+@pytest.mark.parametrize("resolution", RESOLUTIONS)
+@pytest.mark.parametrize("quadrant", sorted(QUADRANT_POINTS))
+def test_criterion_2_boundary_has_four_vertices(resolution: int, quadrant: str) -> None:
+    lon, lat = QUADRANT_POINTS[quadrant]
+    cell = cells.geo_to_cell(lon, lat, resolution)
+    assert len(cells.cell_to_boundary(cell)) == 4
+
+
+@pytest.mark.parametrize("resolution", RESOLUTIONS)
+@pytest.mark.parametrize("quadrant", sorted(QUADRANT_POINTS))
+def test_criterion_2_ring_is_counter_clockwise_in_every_quadrant(
+    resolution: int, quadrant: str
+) -> None:
+    """The half of criterion 2 that mirroring can break.
+
+    Reflection reverses orientation, so NW and SE -- one reflection each
+    -- are where a naive re-signing yields a clockwise ring. SW composes
+    two reflections and comes back correct on its own, which is why
+    testing two quadrants would have missed it.
+    """
+    lon, lat = QUADRANT_POINTS[quadrant]
+    cell = cells.geo_to_cell(lon, lat, resolution)
+    assert local_shoelace(plane_ring(cell)) > 0.0
+
+
+@pytest.mark.parametrize("quadrant", sorted(QUADRANT_POINTS))
+def test_criterion_2_the_ring_starts_at_the_anchor(quadrant: str) -> None:
+    lon, lat = QUADRANT_POINTS[quadrant]
+    cell = cells.geo_to_cell(lon, lat, 9)
+    assert cells.cell_to_boundary(cell)[0] == cells.cell_to_anchor(cell)
+
+
+def test_criterion_2_close_repeats_the_first_vertex() -> None:
+    cell = cells.geo_to_cell(13.0, 42.0, 9)
+    ring = cells.cell_to_boundary(cell, close=True)
+    assert len(ring) == 5
+    assert ring[0] == ring[-1]
+
+
+@pytest.mark.parametrize("quadrant", sorted(QUADRANT_POINTS))
+def test_criterion_2_vertices_match_the_closed_form_of_the_paper(
+    quadrant: str,
+) -> None:
+    """Section 3, Figure 1: ``(x,y)``, ``(x+l,y)``, ``(x,y+l)``, ``(x-l,y+l)``.
+
+    Transcription, not convention: the paper gives the four vertices in
+    closed form and its order is already counter-clockwise.
+    """
+    lon, lat = QUADRANT_POINTS[quadrant]
+    cell = cells.geo_to_cell(lon, lat, 9)
+    anchor_x, anchor_y, side, _ = _anchor_on_plane(cell)
+    ring = [(x - anchor_x, y - anchor_y) for x, y in plane_ring(cell)]
+    expected = [(0.0, 0.0), (side, 0.0), (0.0, side), (-side, side)]
+    sign_x = -1.0 if quadrant[1] == "W" else 1.0
+    sign_y = -1.0 if quadrant[0] == "S" else 1.0
+    mirrored = [(sign_x * vx, sign_y * vy) for vx, vy in expected]
+    if (quadrant[1] == "W") ^ (quadrant[0] == "S"):
+        mirrored = [mirrored[0], *reversed(mirrored[1:])]
+    for got, want in zip(ring, mirrored):
+        assert got[0] == pytest.approx(want[0], abs=1e-6)
+        assert got[1] == pytest.approx(want[1], abs=1e-6)
+
+
+# ==========================================================================
+# Criterion 3 -- B-0.3, mirroring across all four quadrants
+# ==========================================================================
+
+
+@pytest.mark.parametrize("resolution", RESOLUTIONS)
+def test_criterion_3_mirrored_positions_give_mirrored_indices(
+    resolution: int,
+) -> None:
+    """The rule stated literally in the paper, tested on all four.
+
+    Reflection in the x axis for the southern quadrants, in the y axis
+    for the western ones. A position and its three mirrors must give the
+    same base pair and the same refinement codes, differing only in the
+    quadrant code.
+    """
+    lon, lat = 20.0, 10.0
+    reference = split_components(cells.geo_to_cell(lon, lat, resolution))
+    for signed_lon, signed_lat, quadrant in (
+        (lon, lat, "NE"),
+        (-lon, lat, "NW"),
+        (lon, -lat, "SE"),
+        (-lon, -lat, "SW"),
+    ):
+        components = split_components(
+            cells.geo_to_cell(signed_lon, signed_lat, resolution)
+        )
+        assert components[0] == quadrant
+        assert components[1:] == reference[1:]
+
+
+def test_criterion_3_the_southwest_composes_both_reflections() -> None:
+    """SW is the case the origin's ``abs()`` gets right by accident.
+
+    Two reflections restore orientation, so a bug that only checks
+    orientation would pass here and fail in NW and SE. Stated as its own
+    test so the composition is on the record.
+    """
+    cell = cells.geo_to_cell(-20.0, -10.0, 9)
+    assert cell.startswith("SW")
+    assert local_shoelace(plane_ring(cell)) > 0.0
+    x, y, _, _ = _anchor_on_plane(cell)
+    assert x < 0.0 and y < 0.0
+
+
+# ==========================================================================
+# Criterion 4 -- B-0.2, single traversal
+# ==========================================================================
+
+
+def test_criterion_4_descent_visits_each_level_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Structural, as the amendment asks. Not a clock reading.
+
+    The origin's recursive version asked each ancestor for its
+    coordinates from inside a loop over the ancestors, which is where the
+    quadratic behaviour came from. Counting per-level work proves the
+    traversal is single without measuring a machine.
+    """
+    calls: list[int] = []
+    original = cells.linear_refinement_ratio
+
+    def counting(resolution: int) -> int:
+        calls.append(resolution)
+        return original(resolution)
+
+    monkeypatch.setattr(cells, "linear_refinement_ratio", counting)
+    cells.geo_to_cell(13.0, 42.0, 13)
+    assert calls == list(range(2, 14))
+
+
+def test_criterion_4_ascent_visits_each_level_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[int] = []
+    original = cells.linear_refinement_ratio
+
+    def counting(resolution: int) -> int:
+        calls.append(resolution)
+        return original(resolution)
+
+    cell = cells.geo_to_cell(13.0, 42.0, 13)
+    monkeypatch.setattr(cells, "linear_refinement_ratio", counting)
+    cells.cell_to_anchor(cell)
+    assert calls == list(range(2, 14))
+
+
+def test_criterion_4_cost_grows_linearly_not_quadratically() -> None:
+    """The complexity claim, as a ratio rather than an absolute time.
+
+    Doubling the depth roughly doubles the work under a single traversal
+    and roughly quadruples it under the origin's recursion. The bound is
+    deliberately loose: this runs on the CI matrix, where the machine
+    varies, and the lesson of D-2.90 is that hand-written numbers do not
+    survive. The measured figure goes in the handoff, not here.
+    """
+
+    def elapsed(resolution: int, repeats: int = 300) -> float:
+        start = time.perf_counter()
+        for _ in range(repeats):
+            cells.geo_to_cell(13.0, 42.0, resolution)
+        return time.perf_counter() - start
+
+    shallow = elapsed(6)
+    deep = elapsed(12)
+    assert deep < 6.0 * shallow
+
+
+# ==========================================================================
+# Criterion 5 -- B-0.4, the centroid exists and is geodetic
+# ==========================================================================
+
+
+@pytest.mark.parametrize("resolution", RESOLUTIONS)
+@pytest.mark.parametrize("quadrant", sorted(QUADRANT_POINTS))
+def test_criterion_5_centroid_is_a_geodetic_position(
+    resolution: int, quadrant: str
+) -> None:
+    lon, lat = QUADRANT_POINTS[quadrant]
+    cell = cells.geo_to_cell(lon, lat, resolution)
+    centroid_lon, centroid_lat = cells.cell_to_centroid(cell)
+    assert -180.0 <= centroid_lon <= 180.0
+    assert -90.0 <= centroid_lat <= 90.0
+
+
+@pytest.mark.parametrize("quadrant", sorted(QUADRANT_POINTS))
+def test_criterion_5_centroid_sits_half_a_side_above_the_anchor(
+    quadrant: str,
+) -> None:
+    """For a parallelogram the four-vertex mean collapses to this.
+
+    The abscissa is unchanged because the shear leans the top edge back
+    by exactly one side; the ordinate rises by half a side.
+    """
+    lon, lat = QUADRANT_POINTS[quadrant]
+    cell = cells.geo_to_cell(lon, lat, 5)
+    anchor_x, anchor_y, side, _ = _anchor_on_plane(cell)
+    sign_y = -1.0 if quadrant[0] == "S" else 1.0
+    centroid_x, centroid_y = geodetic_to_sinusoidal(*cells.cell_to_centroid(cell))
+    assert centroid_x == pytest.approx(anchor_x, abs=1e-6)
+    assert centroid_y == pytest.approx(anchor_y + sign_y * side / 2.0, abs=1e-6)
+
+
+def test_criterion_5_centroid_differs_from_the_anchor() -> None:
+    """The distinction D-0.5 exists to enforce, stated once."""
+    cell = cells.geo_to_cell(13.0, 42.0, 5)
+    assert cells.cell_to_centroid(cell) != cells.cell_to_anchor(cell)
+
+
+# ==========================================================================
+# Criterion 8 -- equal area, measured from the reprojected boundary
+# ==========================================================================
+
+
+@pytest.mark.parametrize("resolution", RESOLUTIONS)
+@pytest.mark.parametrize("quadrant", sorted(QUADRANT_POINTS))
+def test_criterion_8_measured_area_matches_the_nominal_area(
+    resolution: int, quadrant: str
+) -> None:
+    """Under 0.01%, from the geodetic ring projected back onto the plane.
+
+    This is the equal-area property end to end: the boundary goes out
+    through the inverse projection and comes back through the forward
+    one, and the area survives the trip.
+    """
+    lon, lat = QUADRANT_POINTS[quadrant]
+    cell = cells.geo_to_cell(lon, lat, resolution)
+    measured = local_shoelace(plane_ring(cell))
+    nominal = nominal_cell_area(resolution)
+    assert abs(measured / nominal - 1.0) < 1e-4
+
+
+def test_criterion_8_area_is_the_same_at_the_equator_and_near_the_pole() -> None:
+    """Equal area means equal area, not equal-area-where-convenient."""
+    equator = cells.geo_to_cell(30.0, 0.5, 5)
+    polar = cells.geo_to_cell(15.6469, 78.2232, 5)  # Longyearbyen
+    area_equator = local_shoelace(plane_ring(equator))
+    area_polar = local_shoelace(plane_ring(polar))
+    assert area_equator == pytest.approx(area_polar, rel=1e-4)
+
+
+# ==========================================================================
+# Criterion 9 -- the three orientations, pinned by name
+# ==========================================================================
+
+
+def test_criterion_9_orientation_1_the_y_index_grows_northward() -> None:
+    """Measured, against the paper's prose, which reads the other way.
+
+    Two positions on the same meridian: the northern one must carry the
+    larger Y. B-1.2 measured the same thing on the projection; this pins
+    it on the index, which is what F4 and F6 consume.
+    """
+    south = split_components(cells.geo_to_cell(20.0, 10.0, 1))[1]
+    north = split_components(cells.geo_to_cell(20.0, 20.0, 1))[1]
+    assert int(north.split("/")[1]) > int(south.split("/")[1])
+
+
+def test_criterion_9_orientation_2_codes_1_and_2_sit_on_the_southern_row() -> None:
+    """The 2x2 quaternary layout of Figure 3(c).
+
+    Two positions inside one resolution-1 cell, differing only in
+    latitude: the southern one takes a code from ``{1, 2}`` and the
+    northern one from ``{3, 4}``.
+    """
+    parent = cells.geo_to_cell(20.0, 10.0, 1)
+    base_x, base_y = _anchor_on_plane(parent)[:2]
+    side = cell_size(2)
+    south_code = split_components(
+        cells.sinusoidal_to_cell(base_x + side / 2, base_y + side / 4, 2)
+    )[-1]
+    north_code = split_components(
+        cells.sinusoidal_to_cell(base_x + side / 2, base_y + side * 1.25, 2)
+    )[-1]
+    assert south_code in {"1", "2"}
+    assert north_code in {"3", "4"}
+
+
+def test_criterion_9_orientation_3_the_letter_grows_from_a_south_to_e_north() -> None:
+    """The 5x5 quinary layout of Figure 3(d).
+
+    Row ``A`` is the southern row. The vertical wrap-around ``E <-> A``
+    that F6 will rely on inherits its sign from this.
+    """
+    parent = cells.geo_to_cell(20.0, 10.0, 2)
+    base_x, base_y = _anchor_on_plane(parent)[:2]
+    side = cell_size(3)
+    codes = [
+        split_components(
+            cells.sinusoidal_to_cell(
+                base_x + side * 2.5, base_y + side * (row + 0.5), 3
+            )
+        )[-1]
+        for row in range(5)
+    ]
+    assert [code[0] for code in codes] == ["A", "B", "C", "D", "E"]
+
+
+# ==========================================================================
+# Vectorised semantics (D-0.2)
+# ==========================================================================
+
+
+def test_atomic_index_returns_a_scalar_not_a_list_of_one() -> None:
+    cell = cells.geo_to_cell(13.0, 42.0, 9)
+    anchor = cells.cell_to_anchor(cell)
+    assert isinstance(anchor, tuple)
+    assert len(anchor) == 2
+
+
+def test_compositional_index_returns_a_list_aligned_with_decompose() -> None:
+    region = "NE(0500/0400(1(A1,A2,B3)))"
+    anchors = cells.cell_to_anchor(region)
+    assert isinstance(anchors, list)
+    assert len(anchors) == len(decompose(region))
+    for atom, anchor in zip(decompose(region), anchors):
+        assert cells.cell_to_anchor(atom) == anchor
+
+
+def test_boundary_of_a_compositional_index_is_a_list_of_rings() -> None:
+    region = "NE(0500/0400(1(A1,A2)))"
+    rings = cells.cell_to_boundary(region)
+    assert len(rings) == 2
+    assert all(len(ring) == 4 for ring in rings)
+
+
+def test_cell_to_polygon_round_trips_through_shapely() -> None:
+    cell = cells.geo_to_cell(13.0, 42.0, 9)
+    polygon = cells.cell_to_polygon(cell)
+    assert polygon.is_valid
+    assert len(polygon.exterior.coords) == 5
+
+
+def test_cell_to_polygon_of_a_compositional_index_is_a_list() -> None:
+    polygons = cells.cell_to_polygon("NE(0500/0400(1(A1,A2)))")
+    assert len(polygons) == 2
+    assert all(polygon.is_valid for polygon in polygons)
+
+
+# ==========================================================================
+# The plane entry point
+# ==========================================================================
+
+
+@pytest.mark.parametrize("resolution", RESOLUTIONS)
+def test_sinusoidal_to_cell_agrees_with_geo_to_cell(resolution: int) -> None:
+    lon, lat = 13.0, 42.0
+    x, y = geodetic_to_sinusoidal(lon, lat)
+    assert cells.sinusoidal_to_cell(x, y, resolution) == cells.geo_to_cell(
+        lon, lat, resolution
+    )
+
+
+@pytest.mark.parametrize("resolution", RESOLUTIONS)
+def test_cell_to_sinusoidal_inverts_the_plane_entry_point(resolution: int) -> None:
+    cell = cells.geo_to_cell(13.0, 42.0, resolution)
+    x, y = cells.cell_to_sinusoidal(cell)
+    assert cells.sinusoidal_to_cell(x, y, resolution) == cell
+
+
+# ==========================================================================
+# Boundary scope (D-3.5) and input validation
+# ==========================================================================
+
+
+def test_the_prime_meridian_itself_is_refused() -> None:
+    with pytest.raises(NonExistentCellError, match="triangular"):
+        cells.geo_to_cell(0.0, 42.0, 9)
+
+
+def test_a_prime_meridian_cell_is_refused() -> None:
+    with pytest.raises(NonExistentCellError, match="prime-meridian"):
+        cells.geo_to_cell(0.01, 42.0, 9)
+
+
+@pytest.mark.parametrize("lon", [179.9, -179.9, 180.0, -180.0])
+def test_the_antemeridian_band_is_refused(lon: float) -> None:
+    with pytest.raises(AntemeridianError, match="antemeridian"):
+        cells.geo_to_cell(lon, 42.0, 9)
+
+
+@pytest.mark.parametrize("resolution", [0, 14, -1])
+def test_quantization_rejects_resolutions_outside_one_to_thirteen(
+    resolution: int,
+) -> None:
+    with pytest.raises(ResolutionError, match="outside 1"):
+        cells.geo_to_cell(13.0, 42.0, resolution)
+
+
+@pytest.mark.parametrize("bogus", [True, 9.0, "9", None])
+def test_quantization_rejects_non_integer_resolutions(bogus: object) -> None:
+    with pytest.raises(ResolutionError, match="must be an int"):
+        cells.geo_to_cell(13.0, 42.0, bogus)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "lon,lat",
+    [
+        (13.0, 91.0),
+        (13.0, -91.0),
+        (181.0, 42.0),
+        (float("nan"), 42.0),
+        (13.0, float("inf")),
+    ],
+)
+def test_quantization_rejects_positions_outside_the_domain(
+    lon: float, lat: float
+) -> None:
+    with pytest.raises(DomainError):
+        cells.geo_to_cell(lon, lat, 9)
+
+
+@pytest.mark.parametrize("bogus", [float("nan"), float("inf")])
+def test_the_plane_entry_point_rejects_non_finite_coordinates(bogus: float) -> None:
+    with pytest.raises(DomainError, match="finite"):
+        cells.sinusoidal_to_cell(bogus, 1000.0, 9)
+
+
+# ==========================================================================
+# The index assembler (P-3.3)
+# ==========================================================================
+
+
+@pytest.mark.parametrize("resolution", RESOLUTIONS)
+def test_the_assembler_inverts_split_components(resolution: int) -> None:
+    """The invariant that keeps the private helper honest."""
+    cell = cells.geo_to_cell(13.0, 42.0, resolution)
+    assert _from_path(split_components(cell)) == cell
+
+
+def test_the_assembler_renders_a_bare_quadrant() -> None:
+    assert _from_path(["NE"]) == "NE"
+
+
+@pytest.mark.parametrize("resolution", RESOLUTIONS)
+def test_every_emitted_index_is_valid_and_atomic(resolution: int) -> None:
+    for lon, lat in QUADRANT_POINTS.values():
+        cell = cells.geo_to_cell(lon, lat, resolution)
+        assert cells._is_valid_atomic(cell)
+
+
+def test_the_paper_example_parses_to_the_documented_shape(
+    paper_example_index: str,
+) -> None:
+    """Section 3.1: ``SE(1400/0374(3(C2(3))))``, a resolution-4 cell."""
+    assert split_components(paper_example_index) == [
+        "SE",
+        "1400/0374",
+        "3",
+        "C2",
+        "3",
+    ]
+    assert cells._is_valid_atomic(paper_example_index)
