@@ -23,3 +23,6 @@ docs/source/api/_autosummary/
 notebooks/
 docs/source/api/generated/
 docs/source/_generated/
+*.egg-info/
+docs/warnings.txt
+_build/

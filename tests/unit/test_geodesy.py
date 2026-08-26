@@ -509,21 +509,71 @@ ORIGIN_GEODESIC_ITA_CURITIBA: tuple[float, float] = (
 """``itacart_core.geodesy.inverse_geodesic`` between the two project sites."""
 
 
-def test_port_reproduces_origin_projection_bit_for_bit() -> None:
-    """The ported projection is not merely close to the origin: it is equal."""
+#: Largest gap tolerated between the port and the origin capture, in units
+#: in the last place. sin, cos and sqrt are not required by IEEE 754 to be
+#: correctly rounded, so a different libm may land a bit or two away on the
+#: same input; the CI matrix found macOS on arm64 exactly one ulp from the
+#: capture platform. Four leaves room for that and still rules out any real
+#: difference: one ulp on a projected coordinate is under a nanometre.
+MAX_ULP_DRIFT = 4
+
+#: Vincenty iterates to a fixed convergence threshold, so a one-ulp
+#: difference in an intermediate can cost or save a whole iteration and move
+#: several of the final bits. The budget is therefore looser than for the
+#: closed-form quantities above, and still under a nanometre of distance.
+MAX_ULP_DRIFT_ITERATIVE = 16
+
+
+def _ulp_distance(computed: float, expected: float) -> float:
+    """Gap between two floats, measured in units in the last place."""
+    return abs(computed - expected) / math.ulp(expected)
+
+
+def _assert_matches_origin(
+    computed: tuple[float, ...] | float,
+    expected: tuple[float, ...] | float,
+    budget: int,
+    label: str,
+) -> None:
+    """Assert agreement with the origin to within ``budget`` ulps."""
+    got = computed if isinstance(computed, tuple) else (computed,)
+    want = expected if isinstance(expected, tuple) else (expected,)
+    for axis, (one, other) in enumerate(zip(got, want)):
+        drift = _ulp_distance(one, other)
+        assert drift <= budget, (
+            f"{label} component {axis}: {one!r} vs origin {other!r}, "
+            f"{drift:.1f} ulp apart, budget {budget}"
+        )
+
+
+def test_port_reproduces_origin_projection_to_the_last_bits() -> None:
+    """The ported projection is not merely close to the origin."""
     for (lon, lat), expected in ORIGIN_FORWARD.items():
-        assert geodesy.geodetic_to_sinusoidal(lon, lat) == expected
+        _assert_matches_origin(
+            geodesy.geodetic_to_sinusoidal(lon, lat),
+            expected,
+            MAX_ULP_DRIFT,
+            f"projection at ({lon}, {lat})",
+        )
 
 
-def test_port_reproduces_origin_meridian_quadrant_bit_for_bit() -> None:
-    assert geodesy.meridian_arc(90.0) == ORIGIN_MERIDIAN_QUADRANT
+def test_port_reproduces_origin_meridian_quadrant_to_the_last_bits() -> None:
+    _assert_matches_origin(
+        geodesy.meridian_arc(90.0),
+        ORIGIN_MERIDIAN_QUADRANT,
+        MAX_ULP_DRIFT,
+        "meridian quadrant",
+    )
 
 
-def test_port_reproduces_origin_geodesic_bit_for_bit() -> None:
+def test_port_reproduces_origin_geodesic_to_the_last_bits() -> None:
     lon1, lat1 = REFERENCE_POINTS["ita_sjc"]
     lon2, lat2 = REFERENCE_POINTS["curitiba"]
-    assert (
-        geodesy.inverse_geodesic(lon1, lat1, lon2, lat2) == ORIGIN_GEODESIC_ITA_CURITIBA
+    _assert_matches_origin(
+        geodesy.inverse_geodesic(lon1, lat1, lon2, lat2),
+        ORIGIN_GEODESIC_ITA_CURITIBA,
+        MAX_ULP_DRIFT_ITERATIVE,
+        "geodesic ITA-Curitiba",
     )
 
 
