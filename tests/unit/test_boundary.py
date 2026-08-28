@@ -546,6 +546,51 @@ def test_criterion_8_the_ring_is_counter_clockwise_in_every_quadrant(
     assert boundary._signed_area(ring) > 0.0
 
 
+@pytest.mark.parametrize("quadrant", ["NE", "NW", "SE", "SW"])
+def test_criterion_8_a_trapezoid_ring_is_counter_clockwise(quadrant: str) -> None:
+    """Absorption must not flip the winding, in any quadrant.
+
+    The sibling test above checks parallelograms and triangles, whose
+    vertices are written in order by construction. A trapezoid's are not:
+    two of them are displaced along their own horizontals to land on the
+    border, and in the western and southern quadrants the ring has also
+    been mirrored, which reverses orientation before the sequence is
+    reversed back. A ring that came out clockwise would still have the
+    right area under the shoelace but the wrong sign, and Shapely would
+    hand a caller a polygon wound the wrong way.
+
+    Enumerated over every row rather than spot-checked, because the
+    displacement depends on how far the border has retreated and that
+    varies with latitude.
+    """
+    for row in range(0, 1000):
+        cell = f"{quadrant}({_last_column(quadrant, row):04d}/{row:04d})"
+        if boundary.cell_shape(cell) != "trapezoid":
+            continue
+        ring = boundary.plane_ring(cell)[1]
+        assert boundary._signed_area(ring) > 0.0, cell
+        polygon = Polygon(ring)
+        assert polygon.is_valid and polygon.is_simple, cell
+        assert polygon.exterior.is_ccw, cell
+
+
+@pytest.mark.parametrize("quadrant", ["NE", "NW", "SE", "SW"])
+def test_criterion_8_the_polar_triangle_ring_is_counter_clockwise(
+    quadrant: str,
+) -> None:
+    """The polar cell too, whose apex the border has collapsed to a point.
+
+    Three vertices instead of four, produced by a different path -- the
+    pole clip runs before absorption -- so its winding is worth asserting
+    on its own rather than inferring from the trapezoid case.
+    """
+    cell = f"{quadrant[0]}E(0000/1000)"
+    ring = boundary.plane_ring(cell)[1]
+    assert len(ring) == 3
+    assert boundary._signed_area(ring) > 0.0
+    assert Polygon(ring).exterior.is_ccw
+
+
 @pytest.mark.parametrize("quadrant", ["NE", "SE"])
 def test_criterion_8_a_triangle_has_three_vertices(quadrant: str) -> None:
     cell = f"{quadrant}(0000/0500)"
