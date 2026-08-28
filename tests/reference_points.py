@@ -38,6 +38,12 @@ REFERENCE_POINTS: Final[dict[str, tuple[float, float]]] = {
     "wrangel": (-179.4000, 71.2333),
     # High latitude, far from the origin of the projection
     "longyearbyen": (15.6469, 78.2232),
+    # Section 3.2: positions that must NOT fall in an extension zone
+    "central_pacific": (-150.0, -10.0),
+    "bering_sea_west_of_the_limit": (-150.0, 68.0),
+    # Section 3.2: the prime-meridian triangles
+    "prime_meridian_north": (0.0, 42.0),
+    "just_west_of_greenwich": (-0.02, 51.4779),
 }
 """Named ``(lon_deg, lat_deg)`` positions, in degrees."""
 

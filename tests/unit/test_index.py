@@ -529,10 +529,35 @@ def test_unknown_quadrant_raises_the_specific_subclass() -> None:
         ix.parse("XX(0001/0001)")
 
 
-def test_x_index_beyond_the_table_1_maximum_is_refused() -> None:
-    max_x = int(RES1_MAX_INDEX.split("/")[0])
-    assert ix.is_valid_index(f"SE({max_x}/0001)")
-    assert not ix.is_valid_index(f"SE({max_x + 1}/0001)")
+def test_x_index_admits_one_column_past_the_table_1_maximum() -> None:
+    """The grammar reaches 2004, and stops there.
+
+    Table 1 caps the column at 2003, and every resolution-1 cell obeys
+    that. The grammar stands one column further out because refining a
+    trapezoidal cell of column 2003 produces a child whose resolution-1
+    prefix is 2004 -- the only place in the system where a child's prefix
+    is not its parent. That prefix has to be spellable.
+
+    The ceiling is syntactic. It says nothing about which cells exist,
+    which ``boundary.is_valid_cell`` decides, and 2004 is never a
+    resolution-1 cell in its own right.
+    """
+    table_1_max = int(RES1_MAX_INDEX.split("/")[0])
+    assert ix.is_valid_index(f"SE({table_1_max}/0001)")
+    assert ix.is_valid_index(f"SE({table_1_max + 1}/0001)")
+    assert not ix.is_valid_index(f"SE({table_1_max + 2}/0001)")
+
+
+def test_the_x_ceiling_stands_exactly_one_column_past_table_1() -> None:
+    """A regression guard on the size of the concession.
+
+    Loosening the ceiling is a deliberate exception, and an exception that
+    can drift is not an exception. Nothing measured anywhere on the globe
+    reaches 2005: the widest parallel is the equator at 2003.7508 cell
+    sides, and the extension zones never approach it because ``cos φ``
+    withdraws faster than the extension adds.
+    """
+    assert ix._RES1_MAX_X == int(RES1_MAX_INDEX.split("/")[0]) + 1
 
 
 def test_y_index_beyond_the_table_1_maximum_is_refused() -> None:

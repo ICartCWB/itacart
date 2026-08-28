@@ -318,9 +318,34 @@ def test_get_resolution_of_figure_7_reports_the_mixture(
 # ==========================================================================
 
 
-def test_effective_cell_area_is_not_implemented_yet() -> None:
-    with pytest.raises(NotImplementedError, match="F4"):
-        res.effective_cell_area("NE(0001/0002(1))")
+def test_effective_cell_area_reads_the_table_for_unclipped_cells() -> None:
+    """Parallelograms and meridian triangles carry the nominal area exactly.
+
+    The triangle is the interesting half: base twice height, halved, is
+    the area of the parallelogram it replaces, which is why the prime
+    meridian does not cost the grid its equal-area property.
+    """
+    for cell in ("NE(1400/0374)", "SE(0900/0200(3))", "NE(0000/0500)"):
+        assert res.effective_cell_area(cell) == res.nominal_cell_area(
+            res.get_resolution(cell)
+        )
+
+
+def test_effective_cell_area_measures_a_clipped_cell() -> None:
+    """A trapezoid is measured from its own vertices, and differs."""
+    from itacart import boundary
+
+    cell = "NE(2003/0000)"
+    assert boundary.cell_shape(cell) == "trapezoid"
+    effective = res.effective_cell_area(cell)
+    assert effective != res.nominal_cell_area(1)
+    assert effective > 0.0
+
+
+def test_effective_cell_area_is_positionally_aligned() -> None:
+    """A composed index answers a list, one entry per terminal cell."""
+    areas = res.effective_cell_area("NE(1400/0374(1,2,3,4))")
+    assert areas == [res.nominal_cell_area(2)] * 4
 
 
 def test_effective_cell_area_does_not_masquerade_as_a_domain_error() -> None:
@@ -417,7 +442,7 @@ def test_tokenizable_rejects_the_quadrant_level() -> None:
 # Fidelity to itacart_core, and the two deliberate divergences
 # ==========================================================================
 
-# itacart_core/resolutions.py stores sides as exact integer centimetres.
+# itacart_core/res.py stores sides as exact integer centimetres.
 # Transcribed here so the port is measured against the origin as well as
 # against the paper -- a third witness, independent of both.
 ORIGIN_BASE_LENGTH_CM = {

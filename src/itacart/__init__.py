@@ -33,6 +33,7 @@ __paper_doi__ = "10.14393/rbcv77n0a-79281"
 # -- Constants --------------------------------------------------------------
 
 from .boundary import (
+    absorbs_border,
     cell_shape,
     crosses_antemeridian,
     extension_bounds,
@@ -43,6 +44,7 @@ from .boundary import (
     is_trapezoidal_cell,
     is_triangular_cell,
     is_valid_cell,
+    last_lattice_column,
 )
 from .cells import (
     cell_to_anchor,
@@ -306,6 +308,8 @@ __all__ = [
     "extension_zone",
     "extension_bounds",
     "crosses_antemeridian",
+    "absorbs_border",
+    "last_lattice_column",
     # geometry
     "polyfill",
     "count_internal_cells",

@@ -49,21 +49,14 @@ from .constants import (
     ANTEMERIDIAN_LON,
     DESCENT_CLOSE,
     DESCENT_OPEN,
-    EXTENSION_LON_PRECISION,
     MAX_RESOLUTION,
-    PRIME_MERIDIAN_LON,
     QUINARY_GRID_SIZE,
     RES1_DIGITS,
     RES1_SEPARATOR,
     refinement_alphabet,
 )
-from .exceptions import (
-    AntemeridianError,
-    DomainError,
-    NonExistentCellError,
-    ResolutionError,
-)
-from .geodesy import geodetic_to_sinusoidal, sinusoidal_to_geodetic
+from .exceptions import DomainError, NonExistentCellError, ResolutionError
+from .geodesy import geodetic_to_sinusoidal
 from .index import is_atomic, is_valid_index, iter_cells, split_components
 from .resolutions import cell_size, linear_refinement_ratio
 
@@ -160,34 +153,116 @@ def _check_position(lon: float, lat: float) -> None:
         raise DomainError(f"lon {lon} outside [-180, 180]")
 
 
-def _check_boundary(lon: float, lat: float, x_index: int) -> None:
-    """Reject positions resolving onto a cell F3 does not model.
+def _resolve_extension(lon: float, lat: float) -> tuple[float, str]:
+    """Longitude and quadrant a position addresses, honouring the extensions.
 
-    Two conditions, both from section 3.2 of the paper and both deferred
-    to F4:
+    Two hemispheres meet at the antemeridian, and one of them may reach
+    across it. A position west of 180 degrees inside Fiji's or
+    Chukotka's latitude band belongs to the *eastern* quadrant, addressed
+    by a longitude past 180: the projection is linear in longitude and
+    carries straight on.
 
-    - within :data:`~itacart.constants.EXTENSION_LON_PRECISION` degrees of
-      the antemeridian, where cells are trapezoids or fall in an extension
-      zone;
-    - ``X < 1``, where the cell touches the prime meridian and is an
-      isosceles triangle rather than a parallelogram.
+    The prime meridian and the antemeridian are both single lines with a
+    quadrant on either side; both are awarded to the east, so that the
+    cell owning a boundary point is the one whose index encodes it.
 
-    Raising is the point. Returning a parallelogram index for a triangular
-    cell would give a cadastral caller a plausible area for a parcel that
-    is a different shape (``D-3.5``).
+    Returns:
+        ``(lon, quadrant)`` ready for projection and descent.
     """
-    if abs(abs(lon) - ANTEMERIDIAN_LON) < EXTENSION_LON_PRECISION:
-        raise AntemeridianError(
-            f"lon {lon} lies within {EXTENSION_LON_PRECISION} degrees of the "
-            "antemeridian, where cells are trapezoidal or fall in an "
-            "extension zone; delivered in F4"
-        )
-    if x_index < 1:
-        raise NonExistentCellError(
-            f"position lon={lon}, lat={lat} resolves onto a prime-meridian "
-            f"cell (X={x_index}), which is an isosceles triangle rather than "
-            "a parallelogram; delivered in F4"
-        )
+    from .boundary import extension_zone_for_point
+    from .constants import EXTENSION_ZONES
+
+    if lon == -ANTEMERIDIAN_LON:
+        lon = ANTEMERIDIAN_LON
+    zone = extension_zone_for_point(lon, lat)
+    if zone is not None and lon < 0.0 and lon <= EXTENSION_ZONES[zone].lon_limit:
+        lon += 2.0 * ANTEMERIDIAN_LON
+    return lon, ("N" if lat >= 0.0 else "S") + ("E" if lon >= 0.0 else "W")
+
+
+def _descend_triangle(
+    px: float, py: float, quadrant: str, row: int, resolution: int
+) -> list[str]:
+    """Refinement codes of the cell containing a position on the meridian.
+
+    The resolution-1 cell of the prime-meridian column is an isosceles
+    triangle spanning both sides of the line, so the ordinary descent
+    does not apply to it. Its children do not all inherit the shape:
+    exactly one per sub-row straddles the meridian and stays a triangle,
+    pointing toward the pole with its base toward the equator, and the
+    rest are ordinary parallelograms. Once the descent steps off the
+    line it never returns, and the remaining levels are the ordinary
+    subdivision.
+    """
+    from .boundary import child_code, meridian_child_grid
+
+    y_sign = -1.0 if quadrant[0] == "S" else 1.0
+    side = _L1
+    base = y_sign * row * _L1
+    codes: list[str] = []
+
+    for level in range(2, resolution + 1):
+        size = linear_refinement_ratio(level)
+        sub = side / size
+        height = (py - base) * y_sign
+        sub_row = min(max(int((height + FLOOR_EPSILON_M) // sub), 0), size - 1)
+        within = min(max((height + FLOOR_EPSILON_M) / sub - sub_row, 0.0), 1.0)
+
+        # The triangle of this sub-row narrows from a full side at its
+        # base to nothing at its apex; the parallelograms beside it lean
+        # toward the meridian at the same rate.
+        across = px / sub
+        span = 1.0 - within + FLOOR_EPSILON_M / sub
+        if abs(across) <= span:
+            offset = 0
+        else:
+            steps = int(abs(across) + within + FLOOR_EPSILON_M / sub)
+            steps = min(max(steps, 1), size - sub_row - 1)
+            offset = steps if across > 0.0 else -steps
+
+        codes.append(child_code(*meridian_child_grid(sub_row, offset), level))
+        base += y_sign * sub_row * sub
+        side = sub
+        if offset != 0:
+            anchor_x = abs(offset) * sub
+            anchor_y = abs(base)
+            codes.extend(
+                _descend_parallelogram(
+                    abs(px) - anchor_x, abs(py) - anchor_y, sub, level + 1, resolution
+                )
+            )
+            break
+
+    return codes
+
+
+def _descend_parallelogram(
+    residual_x: float, residual_y: float, side: float, first: int, resolution: int
+) -> list[str]:
+    """Refinement codes below a parallelogram, from residuals at its anchor.
+
+    Shared by the ordinary descent and by the tail of a meridian descent
+    that has stepped off the line, so the subdivision rule is written
+    once.
+    """
+    residual_u = residual_x + residual_y
+    residual_v = residual_y
+    codes: list[str] = []
+    for level in range(first, resolution + 1):
+        divisor = linear_refinement_ratio(level)
+        sub = side / divisor
+        if divisor == 2:
+            child_u = 1 if residual_u + FLOOR_EPSILON_M >= sub else 0
+            child_v = 1 if residual_v + FLOOR_EPSILON_M >= sub else 0
+            codes.append(str(child_v * 2 + child_u + 1))
+        else:
+            child_u = _bucket(residual_u, sub, divisor)
+            child_v = _bucket(residual_v, sub, divisor)
+            codes.append(f"{_ROW_LETTERS[child_v]}{child_u + 1}")
+        residual_u -= child_u * sub
+        residual_v -= child_v * sub
+        side = sub
+    return codes
 
 
 # --------------------------------------------------------------------------
@@ -221,14 +296,9 @@ def geo_to_cell(lon: float, lat: float, resolution: int) -> str:
     """
     _check_resolution(resolution)
     _check_position(lon, lat)
-    if lon == PRIME_MERIDIAN_LON:
-        raise NonExistentCellError(
-            "the prime meridian itself is covered by triangular cells; "
-            "delivered in F4"
-        )
-    quadrant = ("N" if lat >= 0.0 else "S") + ("E" if lon >= 0.0 else "W")
+    lon, quadrant = _resolve_extension(lon, lat)
     x, y = geodetic_to_sinusoidal(lon, lat)
-    return _quantize(abs(x), abs(y), quadrant, resolution, lon, lat)
+    return _quantize(x, y, quadrant, resolution)
 
 
 def sinusoidal_to_cell(x: float, y: float, resolution: int) -> str:
@@ -256,46 +326,55 @@ def sinusoidal_to_cell(x: float, y: float, resolution: int) -> str:
     for value, name in ((x, "x"), (y, "y")):
         if not math.isfinite(value):
             raise DomainError(f"{name} must be finite, got {value!r}")
-    lon, lat = sinusoidal_to_geodetic(x, y)
     quadrant = ("N" if y >= 0.0 else "S") + ("E" if x >= 0.0 else "W")
-    return _quantize(abs(x), abs(y), quadrant, resolution, lon, lat)
+    return _quantize(x, y, quadrant, resolution)
 
 
-def _quantize(
-    ax: float, ay: float, quadrant: str, resolution: int, lon: float, lat: float
-) -> str:
-    """Descend the hierarchy in the quadrant's mirrored positive octant.
+def _quantize(x: float, y: float, quadrant: str, resolution: int) -> str:
+    """Descend the hierarchy from signed plane coordinates.
 
-    ``ax`` and ``ay`` are absolute plane coordinates; ``lon`` and ``lat``
-    are carried only so the boundary screen and its messages can name the
-    position the caller actually gave.
+    Mirrors into the quadrant's positive octant, shears onto the square
+    lattice and floors. Column zero is the prime-meridian column, and it
+    is not a parallelogram: the descent hands over to the triangular
+    lattice and the quadrant is forced east, since the triangle spans
+    both sides of the meridian and the western column does not exist.
+
+    Between the last existing column of the target resolution and the
+    domain border lies a strip the lattice cannot name. The cell that does
+    exist there absorbs the border and covers it, so a position falling in
+    that strip is carried back into that cell before the descent starts.
+    Without this the quantizer would answer a column that
+    :func:`itacart.boundary.is_valid_cell` refuses, and the strip would
+    belong to no cell at all.
     """
-    u = ax + ay
-    v = ay
-    u_col = int(math.floor((u + FLOOR_EPSILON_M) / _L1))
-    row = int(math.floor((v + FLOOR_EPSILON_M) / _L1))
-    column = u_col - row
-    _check_boundary(lon, lat, column)
+    from .boundary import last_lattice_column
 
-    residual_u = u - u_col * _L1
-    residual_v = v - row * _L1
+    absolute_x, absolute_y = abs(x), abs(y)
+    u = absolute_x + absolute_y
 
-    codes: list[str] = []
-    side = _L1
-    for level in range(2, resolution + 1):
-        divisor = linear_refinement_ratio(level)
-        sub = side / divisor
-        if divisor == 2:
-            child_u = 1 if residual_u + FLOOR_EPSILON_M >= sub else 0
-            child_v = 1 if residual_v + FLOOR_EPSILON_M >= sub else 0
-            codes.append(str(child_v * 2 + child_u + 1))
-        else:
-            child_u = _bucket(residual_u, sub, divisor)
-            child_v = _bucket(residual_v, sub, divisor)
-            codes.append(f"{_ROW_LETTERS[child_v]}{child_u + 1}")
-        residual_u -= child_u * sub
-        residual_v -= child_v * sub
-        side = sub
+    side = cell_size(resolution)
+    fine_row = int(math.floor((absolute_y + FLOOR_EPSILON_M) / side))
+    fine_column = int(math.floor((u + FLOOR_EPSILON_M) / side)) - fine_row
+    last = last_lattice_column(quadrant, fine_row, side)
+    if fine_column > last:
+        u = (last + fine_row + 0.5) * side
+
+    row = int(math.floor((absolute_y + FLOOR_EPSILON_M) / _L1))
+    column = int(math.floor((u + FLOOR_EPSILON_M) / _L1)) - row
+
+    if column <= 0:
+        quadrant = quadrant[0] + "E"
+        codes = _descend_triangle(x, y, quadrant, row, resolution)
+        base = f"{0:0{RES1_DIGITS}d}{RES1_SEPARATOR}{row:0{RES1_DIGITS}d}"
+        return _from_path([quadrant, base, *codes])
+
+    codes = _descend_parallelogram(
+        u - (column + row) * _L1 - (absolute_y - row * _L1),
+        absolute_y - row * _L1,
+        _L1,
+        2,
+        resolution,
+    )
 
     base = f"{column:0{RES1_DIGITS}d}{RES1_SEPARATOR}{row:0{RES1_DIGITS}d}"
     return _from_path([quadrant, base, *codes])
@@ -425,26 +504,49 @@ def _per_cell(index: str, values: list[object]) -> object:
     return values[0] if is_atomic(index) else values
 
 
+def _anchor_on_plane_any(cell: str) -> tuple[float, float]:
+    """Signed plane anchor of one atomic cell, whatever its shape.
+
+    A parallelogram reports its lower-left vertex, the vertex its index
+    literally encodes. A triangle reports the midpoint of its base,
+    because that is what the paper says its index denotes -- and the
+    midpoint of a base is not a vertex of the cell at all.
+
+    Cells in the prime-meridian column may be either: only the child that
+    straddles the line stays a triangle, and its siblings are ordinary
+    parallelograms whose anchor rule is the ordinary one.
+    """
+    from .boundary import meridian_geometry
+
+    components = split_components(cell)
+    if len(components) >= 2 and int(components[1].partition(RES1_SEPARATOR)[0]) == 0:
+        _, x, y, _, _, _ = meridian_geometry(cell)
+        return x, y
+    return _anchor_on_plane(cell)[:2]
+
+
 def is_quadrant_boundary_cell(cell: str) -> bool | list[bool]:
-    """Whether a cell's anchor lies on a quadrant axis.
+    """Whether a cell's anchor is shared with a cell in another quadrant.
 
-    True when the anchor sits on the prime meridian or on the equator, so
-    that the mirror cell in the adjacent quadrant reports the *same*
-    geodetic position. The condition is exact, not a tolerance: the
-    anchor's plane coordinates are sums of exact multiples of the cell
-    side, so a cell either lands on the axis or does not.
+    A cell's anchor is a vertex, and a vertex lies on the border of every
+    cell that meets there. The half-open convention awards each border
+    point to exactly one cell: a cell owns the ordinates from its own row
+    up to, but not including, the next, and likewise across. That makes
+    the anchor identify its own cell everywhere the convention and the
+    quadrant signs agree.
 
-    This is the predicate that scopes acceptance criterion 1 (``D-3.91``).
-    Requantizing an anchor is a statement about a tie-breaking
-    convention, not about geometry, and on an axis no convention can
-    satisfy both claimants -- see ``B-3.1``, which is open and belongs to
-    F4.
+    They disagree in one place. The equator is awarded to the north, so a
+    southern cell in row ``0000`` has its anchor on the edge it does not
+    own, and requantizing that anchor answers the northern cell above it.
+    The prime meridian is the same situation resolved differently: it is
+    awarded to the east, and the paper removes the western column
+    outright rather than leave it holding an anchor it does not own.
 
-    Distinct from :func:`itacart.boundary.is_boundary_cell`, which asks
-    whether a cell touches a *grid discontinuity* -- the meridian
-    triangles, the antemeridian, the extension zones. A cell can be a
-    quadrant-boundary cell here and perfectly ordinary there: a southern
-    ``Y = 0000`` cell is a plain parallelogram covering plain territory.
+    Removal is available at the meridian because the eastern triangle
+    already covers both sides of it. It is not available at the equator,
+    where the two rows cover disjoint ground and deleting one would erase
+    ten kilometres of the southern hemisphere. The property is therefore
+    unsatisfiable for one of the two rows, and this predicate names which.
 
     Args:
         cell: Compositional index string.
@@ -454,8 +556,9 @@ def is_quadrant_boundary_cell(cell: str) -> bool | list[bool]:
     """
     values = []
     for atom in iter_cells(cell):
-        x, y, _, _ = _anchor_on_plane(atom)
-        values.append(x == 0.0 or y == 0.0)
+        quadrant = split_components(atom)[0]
+        _, y = _anchor_on_plane_any(atom)
+        values.append(y == 0.0 and quadrant[0] == "S")
     return _per_cell(cell, list(values))  # type: ignore[return-value]
 
 
@@ -472,19 +575,19 @@ def cell_to_anchor(cell: str) -> tuple[float, float] | list[tuple[float, float]]
     index literally encodes, so ``cell_to_anchor`` inverts the descent
     exactly, with no averaging.
 
+    **Triangular cells differ.** A prime-meridian cell reports the
+    midpoint of its base, which the paper names directly: the cell index
+    "intersects with the prime meridian and functions as the midpoint of
+    the base of an isosceles triangle". That point is not a vertex of the
+    cell, and for a triangle refined into inverted children the base is
+    the side away from the equator rather than toward it.
+
     Use :func:`cell_to_centroid` when a centre point is wanted.
 
-    **Restriction.** The anchor identifies its cell uniquely only when
-    :func:`is_quadrant_boundary_cell` is false. A vertex always lies on
-    the cell's border, and on a quadrant axis the mirror cell in the
-    adjacent quadrant owns the very same vertex: reflection in the x axis
-    turns a southern cell's lower-left corner into its northern
-    extremity, so ``NE(X/0000)`` and ``SE(X/0000)`` report identical
-    positions. Two cells claim one point and no tie-breaking rule
-    satisfies both. The paper resolves the analogous case on the prime
-    meridian with triangular cells and the non-existence of ``X = 0`` in
-    the west, and says nothing about the equator; resolving it is F4's
-    (``B-3.1``, ``D-3.91``).
+    **Restriction.** The anchor identifies its cell uniquely except where
+    :func:`is_quadrant_boundary_cell` is true, which is the southern row
+    ``0000`` and nowhere else. See that function for why the exception
+    cannot be removed.
 
     Args:
         cell: Compositional index string.
@@ -496,9 +599,9 @@ def cell_to_anchor(cell: str) -> tuple[float, float] | list[tuple[float, float]]
         ResolutionError: If the index addresses a whole quadrant, which
             has no anchor.
     """
-    values = [
-        sinusoidal_to_geodetic(*_anchor_on_plane(atom)[:2]) for atom in iter_cells(cell)
-    ]
+    from .boundary import to_geodetic
+
+    values = [to_geodetic(*_anchor_on_plane_any(atom)) for atom in iter_cells(cell)]
     return _per_cell(cell, list(values))  # type: ignore[return-value]
 
 
@@ -514,40 +617,55 @@ def cell_to_sinusoidal(
         ``(x, y)`` in metres for a single cell, or a positionally aligned
         list.
     """
-    values = [_anchor_on_plane(atom)[:2] for atom in iter_cells(cell)]
+    values = [_anchor_on_plane_any(atom) for atom in iter_cells(cell)]
     return _per_cell(cell, list(values))  # type: ignore[return-value]
 
 
 def cell_to_centroid(cell: str) -> tuple[float, float] | list[tuple[float, float]]:
     """Geodetic centroid of a cell.
 
-    Computed on the projection plane, where the cell is an exact
-    parallelogram and its centroid is the mean of its four vertices, then
-    inverted back to geodetic (``D-3.6``). The plane is equal-area, so the
-    area weighting the centroid depends on is the one the plane preserves.
+    Computed on the projection plane, where the cell's edges are straight
+    and its centroid is the area-weighted one, then inverted back to
+    geodetic. The plane is equal-area, so the weighting the centroid
+    depends on is the one the plane preserves.
 
     Averaging the four *geodetic* vertices instead would be wrong: it
     weights by longitude, which the projection compresses by
     ``cos(phi)``, and it breaks outright for any cell spanning the
     antemeridian.
 
-    For a parallelogram the mean simplifies to ``(x, y + side/2)`` in the
-    mirrored octant -- the anchor's abscissa, half a side up. Triangular
-    and trapezoidal cells report their own centroid from F4 onward.
+    All three shapes are handled. For a parallelogram and for a triangle
+    the area centroid coincides with the mean of the vertices; for a
+    clipped trapezoid it does not, and the mean would sit off centre.
 
     Args:
         cell: Compositional index string.
 
     Returns:
         ``(lon, lat)`` for a single cell, or a positionally aligned list.
+
+    Raises:
+        NonExistentCellError: If the cell has no area in the domain.
     """
+    from .boundary import plane_ring, ring_centroid, to_geodetic
+
     values = []
     for atom in iter_cells(cell):
-        ring = _vertices_on_plane(atom)
-        mean_x = math.fsum(vertex[0] for vertex in ring) / len(ring)
-        mean_y = math.fsum(vertex[1] for vertex in ring) / len(ring)
-        values.append(sinusoidal_to_geodetic(mean_x, mean_y))
+        ring = _require_ring(atom, plane_ring(atom)[1])
+        values.append(to_geodetic(*ring_centroid(ring)))
     return _per_cell(cell, list(values))  # type: ignore[return-value]
+
+
+def _require_ring(
+    cell: str, ring: list[tuple[float, float]]
+) -> list[tuple[float, float]]:
+    """Reject a cell whose ring the domain clipped away to nothing."""
+    if not ring:
+        raise NonExistentCellError(
+            f"{cell!r} has no area inside the ITACaRT domain: the column "
+            "lies beyond the meridian bounding its quadrant in that row"
+        )
+    return ring
 
 
 def cell_to_boundary(
@@ -555,14 +673,17 @@ def cell_to_boundary(
 ) -> list[tuple[float, float]] | list[list[tuple[float, float]]]:
     """Geodetic vertices bounding a cell, counter-clockwise.
 
-    Four vertices for a parallelogram, starting at the anchor. Vertex
-    count will depend on
-    :func:`itacart.boundary.cell_shape` once F4 lands: three for a
-    prime-meridian triangle, four for a clipped trapezoid.
+    Four vertices for a parallelogram, three for a prime-meridian
+    triangle, four for a trapezoid clipped on its meridian side. A
+    trapezoid clipped where the border line leans faster than the cell's
+    own side -- which happens above roughly 18.5 degrees of latitude,
+    where the border crosses more than one column per row -- keeps three
+    or five instead, since a line through a convex quadrilateral can
+    leave any of those.
 
     The ring is counter-clockwise in every quadrant. That is not free:
     mirroring the NE octant into NW or SE reverses orientation, so the
-    sequence is reversed back (``B-0.3``).
+    sequence is reversed back.
 
     Args:
         cell: Compositional index string.
@@ -572,10 +693,16 @@ def cell_to_boundary(
     Returns:
         A vertex list for a single cell, or a positionally aligned list
         of vertex lists.
+
+    Raises:
+        NonExistentCellError: If the cell has no area in the domain.
     """
+    from .boundary import plane_ring, to_geodetic
+
     values = []
     for atom in iter_cells(cell):
-        ring = [sinusoidal_to_geodetic(x, y) for x, y in _vertices_on_plane(atom)]
+        plane = _require_ring(atom, plane_ring(atom)[1])
+        ring = [to_geodetic(x, y) for x, y in plane]
         if close:
             ring.append(ring[0])
         values.append(ring)
@@ -584,6 +711,10 @@ def cell_to_boundary(
 
 def cell_to_polygon(cell: str) -> "Polygon | list[Polygon]":
     """Cell boundary as a Shapely polygon in EPSG:4326.
+
+    Valid and closed for all three shapes. A cell inside an extension
+    zone carries longitudes past 180 degrees rather than wrapping, so the
+    polygon stays simple and its area stays measurable.
 
     Args:
         cell: Compositional index string.

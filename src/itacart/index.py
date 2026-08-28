@@ -119,7 +119,29 @@ stable if an alphabet ever grows past one digit, where ``"A10" < "A2"``
 lexically.
 """
 
-_RES1_MAX_X: Final[int] = int(RES1_MAX_INDEX.split(RES1_SEPARATOR)[0])
+_RES1_MAX_X: Final[int] = int(RES1_MAX_INDEX.split(RES1_SEPARATOR)[0]) + 1
+"""Greatest ``X`` the index **grammar** admits at resolution 1.
+
+**Syntactic ceiling, not a limit of existence.** Table 1 caps the column at
+2003 and :data:`~itacart.constants.RES1_MAX_INDEX` transcribes that number
+faithfully; this constant deliberately stands one above it.
+
+The extra column exists because a trapezoidal cell partitions into a number
+of children its own column cannot hold. Refining ``NE(2003/0000)`` yields
+five cells, and the fifth is spelled ``NE(2004/0000(3))``: the only place in
+ITACaRT where a child's resolution-1 prefix is not its parent. ``2004/Y`` is
+admissible **as a prefix of cells finer than resolution 1** and is never
+itself a resolution-1 cell. It is reachable only in the rows whose last
+valid column is 2003, which is rows 0 to 25, up to 2.3513 degrees of
+latitude. No row anywhere needs 2005.
+
+Whether a named cell exists is decided by
+:func:`itacart.boundary.is_valid_cell`, which is the sole arbiter, and never
+by this bound. Reading 2004 here as a geometric fact is the mistake ``B-3.2``
+recorded: the resolution-1 index space is not a rectangle, and no single
+integer describes its eastern edge.
+"""
+
 _RES1_MAX_Y: Final[int] = int(RES1_MAX_INDEX.split(RES1_SEPARATOR)[1])
 
 _DELIMITERS: Final[frozenset[str]] = frozenset(

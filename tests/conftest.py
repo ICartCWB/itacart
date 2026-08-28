@@ -10,6 +10,8 @@ import sys
 
 import pytest
 
+from tests.reference_points import REFERENCE_POINTS
+
 # Windows dev environment: a corrupt cert in the store can break aiohttp
 # imports pulled in by optional geo dependencies.
 if sys.platform == "win32":  # pragma: no cover
@@ -62,3 +64,27 @@ def sydney_cell() -> str:
 def paper_example_index() -> str:
     """The index string used as an example in section 3.1 of the paper."""
     return "SE(1400/0374(3(C2(3))))"
+
+
+@pytest.fixture
+def suva() -> tuple[float, float]:
+    """(lon, lat) of Suva, Fiji: east of 180 and inside the Fiji band."""
+    return REFERENCE_POINTS["suva"]
+
+
+@pytest.fixture
+def wrangel() -> tuple[float, float]:
+    """(lon, lat) of Wrangel Island: west of 180 and inside the Chukotka band."""
+    return REFERENCE_POINTS["wrangel"]
+
+
+@pytest.fixture
+def greenwich_observatory() -> tuple[float, float]:
+    """(lon, lat) of the Royal Observatory, metres west of the prime meridian."""
+    return REFERENCE_POINTS["greenwich_observatory"]
+
+
+@pytest.fixture
+def central_pacific() -> tuple[float, float]:
+    """(lon, lat) of open ocean in neither extension zone."""
+    return REFERENCE_POINTS["central_pacific"]

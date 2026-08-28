@@ -27,3 +27,4 @@ docs/source/_generated/
 docs/warnings.txt
 _build/
 docs/project/
+*.diff

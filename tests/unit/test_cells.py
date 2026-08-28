@@ -24,16 +24,10 @@ import time
 
 import pytest
 
-from itacart import cells
+from itacart import boundary, cells
 from itacart.cells import FLOOR_EPSILON_M, _anchor_on_plane, _from_path
 from itacart.constants import RES1_MAX_INDEX
-from itacart.exceptions import (
-    AntemeridianError,
-    DomainError,
-    InvalidIndexError,
-    NonExistentCellError,
-    ResolutionError,
-)
+from itacart.exceptions import DomainError, InvalidIndexError, ResolutionError
 from itacart.geodesy import geodetic_to_sinusoidal
 from itacart.index import decompose, split_components
 from itacart.resolutions import cell_size, nominal_cell_area
@@ -127,7 +121,7 @@ def test_criterion_1_the_reference_cells_are_not_on_a_quadrant_axis(
 
 
 # --------------------------------------------------------------------------
-# B-3.1 -- open, inherited by F4. Behaviour pinned, not fixed.
+# The quadrant axes, enumerated
 # --------------------------------------------------------------------------
 
 QUADRANT_CODES = ("NE", "NW", "SE", "SW")
@@ -139,17 +133,18 @@ def enumerate_row(template: str) -> dict[str, int]:
 
     Enumeration, not sampling: the boundary families have effectively
     zero measure, so drawing random positions finds them by luck and
-    reports a count that means nothing (``D-3.91``).
+    reports a count that means nothing.
     """
-    tally = {"round_trip": 0, "mirror_collision": 0, "prime_meridian": 0, "domain": 0}
+    tally = {"round_trip": 0, "mirror_collision": 0, "non_existent": 0, "domain": 0}
     for quadrant in QUADRANT_CODES:
         for column in ENUMERATED_COLUMNS:
             cell = template.format(quadrant=quadrant, k=column)
+            if boundary.is_valid_cell(cell) is False:
+                tally["non_existent"] += 1
+                continue
             try:
                 anchor = cells.cell_to_anchor(cell)
                 back = cells.geo_to_cell(anchor[0], anchor[1], 1)
-            except NonExistentCellError:
-                tally["prime_meridian"] += 1
             except DomainError:
                 tally["domain"] += 1
             else:
@@ -158,43 +153,80 @@ def enumerate_row(template: str) -> dict[str, int]:
     return tally
 
 
-def test_b_3_1_the_equator_row_collides_with_its_mirror() -> None:
-    """Every southern ``Y = 0000`` cell requantizes to its northern twin.
+def test_the_equator_row_collides_only_in_the_south() -> None:
+    """The anchor round trip holds except on the southern equator row.
 
-    Reflection in the x axis turns a southern cell's lower-left vertex
-    into its northern extremity, so ``SE(X/0000)`` and ``NE(X/0000)``
-    report the same geodetic position. Exactly half the enumerated cells
-    collide -- the southern half, all of them, deterministically. The
-    four refusals are ``X = 0000``, which is the prime-meridian column.
+    A vertex belongs to every cell that meets there, and the half-open
+    convention awards it to one of them. The equator goes to the north,
+    so a southern row ``0000`` cell holds an anchor it does not own and
+    requantizes to its northern twin. Every southern cell in the row
+    collides and every northern one round-trips; the count is exact
+    because the family is enumerated rather than sampled.
+
+    The western ``X = 0000`` cells are absent from both tallies: they do
+    not exist, which is the paper's own remedy for the same collision on
+    the prime meridian.
     """
     tally = enumerate_row("{quadrant}({k:04d}/0000)")
     assert tally == {
-        "round_trip": 798,
-        "mirror_collision": 798,
-        "prime_meridian": 4,
+        "round_trip": 799,
+        "mirror_collision": 799,
+        "non_existent": 2,
         "domain": 0,
     }
 
 
-def test_b_3_1_the_prime_meridian_column_is_refused_outright() -> None:
-    """``X = 0000`` never reaches the tie-break: F3 refuses it first."""
+def test_the_mirror_collision_is_the_meridian_case_without_its_remedy() -> None:
+    """Why the equator cannot be repaired the way the meridian was.
+
+    On the meridian the eastern triangle covers both sides, so deleting
+    the western column loses no ground and the collision disappears. On
+    the equator the two rows cover disjoint territory: deleting either
+    would erase a ten-kilometre band of a hemisphere. The property is
+    unsatisfiable for one of the two rows, and the predicate names which.
+    """
+    northern, southern = "NE(0518/0000)", "SE(0518/0000)"
+    assert cells.cell_to_anchor(northern) == cells.cell_to_anchor(southern)
+    assert cells.is_quadrant_boundary_cell(southern) is True
+    assert cells.is_quadrant_boundary_cell(northern) is False
+
+    triangle, absent = "NE(0000/0400)", "NW(0000/0400)"
+    assert boundary.is_valid_cell(triangle) is True
+    assert boundary.is_valid_cell(absent) is False
+    anchor = cells.cell_to_anchor(triangle)
+    assert cells.geo_to_cell(anchor[0], anchor[1], 1) == triangle
+
+
+def test_the_prime_meridian_column_round_trips_at_every_row() -> None:
+    """``X = 0000`` is a triangle in the east and nothing in the west.
+
+    Its anchor is the midpoint of its base, which lies on the meridian,
+    and the meridian is awarded to the east -- so the anchor requantizes
+    to the cell that published it. The single collision is the origin
+    cell of the southern quadrant, which sits on the equator as well and
+    loses that tie for the reason the equator test gives.
+    """
     tally = enumerate_row("{quadrant}(0000/{k:04d})")
-    assert tally["prime_meridian"] == 1600
-    assert tally["mirror_collision"] == 0
+    assert tally["non_existent"] == 800
+    assert tally["round_trip"] == 799
+    assert tally["mirror_collision"] == 1
 
 
-def test_b_3_2_the_polar_row_addresses_cells_that_do_not_exist() -> None:
-    """B-3.2, and the reason it is not a mirror problem at all.
+def test_the_polar_row_holds_only_the_meridian_triangle() -> None:
+    """Row ``Y = 1000`` is one cell wide, not empty and not a rectangle.
 
-    Row ``Y = 1000`` sits at latitude 89.98 degrees, where the parallel
-    circle is about 6 km long -- shorter than one 10 km cell. Every
-    ``X >= 1`` there projects to a longitude outside ``[-180, 180]``. The
-    row does not collide; it is empty.
+    At 89.98 degrees the parallel circle is about 6 km long, shorter than
+    one 10 km cell, so no column but the meridian one has any ground
+    under it. The triangle survives, clipped; every ``X >= 1`` is refused
+    as non-existent rather than answered with a longitude off the planet.
     """
     tally = enumerate_row("{quadrant}({k:04d}/1000)")
-    assert tally["domain"] == 1596
-    assert tally["prime_meridian"] == 4
+    assert tally["non_existent"] == 1598
+    assert tally["round_trip"] == 2
     assert tally["mirror_collision"] == 0
+    assert boundary.is_valid_cell("NE(0000/1000)") is True
+    assert boundary.is_valid_cell("NE(0001/1000)") is False
+    assert boundary.is_equal_area_cell("NE(0000/1000)") is False
 
 
 def test_b_3_2_the_resolution_one_index_space_is_not_a_rectangle() -> None:
@@ -215,21 +247,35 @@ def test_b_3_2_the_resolution_one_index_space_is_not_a_rectangle() -> None:
         cells.geo_to_cell(corner_lon, 89.98, 1)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="B-3.1, open and owned by F4 (D-3.91): on a quadrant axis two "
-    "cells share one anchor and no tie-break satisfies both. When F4 "
-    "resolves it this test flips to XPASS and must be rewritten.",
-)
-def test_b_3_1_criterion_1_would_hold_on_the_equator_row() -> None:
+def test_the_equator_restriction_is_a_declared_rule_not_a_pinned_bug() -> None:
+    """The former ``xfail`` retired, replaced by the rule that explains it.
+
+    It pinned a southern equator anchor failing to requantize to itself,
+    as a defect awaiting repair. It is not a defect: a vertex is shared,
+    the half-open convention awards it, and one of the two rows must
+    lose. What was open was the choice of rule, and the rule is now
+    stated -- equator to the north, meridian to the east -- with a public
+    predicate naming exactly where it bites.
+    """
     cell = "SW(0518/0000)"
+    assert cells.is_quadrant_boundary_cell(cell) is True
     anchor = cells.cell_to_anchor(cell)
-    assert cells.geo_to_cell(anchor[0], anchor[1], 1) == cell
+    assert anchor[1] == 0.0
+    assert cells.geo_to_cell(anchor[0], anchor[1], 1) == "NW(0518/0000)"
 
 
-def test_is_quadrant_boundary_cell_flags_both_axes() -> None:
+def test_is_quadrant_boundary_cell_flags_the_southern_equator_row_alone() -> None:
+    """The predicate narrowed once the meridian stopped being a problem.
+
+    It used to flag both axes, because both carried a shared anchor. The
+    meridian no longer does: the western column is gone and the eastern
+    triangle owns its own base midpoint. What is left is the equator, and
+    only its southern side.
+    """
     assert cells.is_quadrant_boundary_cell("SW(0518/0000)") is True
-    assert cells.is_quadrant_boundary_cell("NE(0000/0400)") is True
+    assert cells.is_quadrant_boundary_cell("SE(0518/0000)") is True
+    assert cells.is_quadrant_boundary_cell("NE(0518/0000)") is False
+    assert cells.is_quadrant_boundary_cell("NE(0000/0400)") is False
     assert cells.is_quadrant_boundary_cell("NE(0518/0400)") is False
 
 
@@ -638,20 +684,44 @@ def test_cell_to_sinusoidal_inverts_the_plane_entry_point(resolution: int) -> No
 # ==========================================================================
 
 
-def test_the_prime_meridian_itself_is_refused() -> None:
-    with pytest.raises(NonExistentCellError, match="triangular"):
-        cells.geo_to_cell(0.0, 42.0, 9)
+def test_the_prime_meridian_itself_addresses_a_triangle() -> None:
+    """The meridian is covered, not refused, and it is covered from the east."""
+    cell = cells.geo_to_cell(0.0, 42.0, 9)
+    assert boundary.cell_shape(cell) == "triangle"
+    assert cell.startswith("NE(0000/")
 
 
-def test_a_prime_meridian_cell_is_refused() -> None:
-    with pytest.raises(NonExistentCellError, match="prime-meridian"):
-        cells.geo_to_cell(0.01, 42.0, 9)
+@pytest.mark.parametrize("lon", [-0.01, 0.0, 0.01])
+def test_both_sides_of_the_meridian_address_the_same_eastern_column(
+    lon: float,
+) -> None:
+    """No western cell is created along the meridian, at any resolution.
+
+    The triangle spans both sides, so a position just west of the line is
+    part of the hierarchical subdivision of the eastern cell rather than
+    a cell of its own.
+    """
+    cell = cells.geo_to_cell(lon, 42.0, 9)
+    assert cell.startswith("NE(0000/")
+    assert boundary.cell_shape(cell) in ("triangle", "parallelogram")
 
 
 @pytest.mark.parametrize("lon", [179.9, -179.9, 180.0, -180.0])
-def test_the_antemeridian_band_is_refused(lon: float) -> None:
-    with pytest.raises(AntemeridianError, match="antemeridian"):
-        cells.geo_to_cell(lon, 42.0, 9)
+def test_the_antemeridian_is_addressable_rather_than_refused(lon: float) -> None:
+    """At 42 degrees north there is no extension, so the line is a hard edge.
+
+    F3 refused a half-degree band around it outright. The band was a
+    stand-in: half a degree is the precision the extension limits are
+    quoted to, not an exclusion zone, and the paper asks for clipped
+    cells here rather than none.
+    """
+    cell = cells.geo_to_cell(lon, 42.0, 9)
+    assert boundary.is_valid_cell(cell) is True
+
+
+def test_both_signs_of_one_hundred_and_eighty_name_the_same_cell() -> None:
+    """One meridian, two spellings, awarded to the east like the prime one."""
+    assert cells.geo_to_cell(-180.0, 42.0, 9) == cells.geo_to_cell(180.0, 42.0, 9)
 
 
 @pytest.mark.parametrize("resolution", [0, 14, -1])

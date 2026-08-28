@@ -64,7 +64,7 @@ from .constants import (
     VISUALIZATION_SCALE,
 )
 from .exceptions import ResolutionError
-from .index import decompose, split_components
+from .index import decompose, is_atomic, iter_cells, split_components
 
 __all__ = [
     "get_resolution",
@@ -285,17 +285,11 @@ def effective_cell_area(cell: str) -> float | list[float]:
     Cadastral use makes this distinction legally significant: returning
     the nominal area for a clipped cell would misstate a parcel.
 
-    NOT IMPLEMENTED until F4. Telling a trapezoid from a parallelogram
-    requires :func:`itacart.boundary.cell_shape`, which does not exist
-    yet, and there is no safe fallback: returning the nominal area for
-    every cell would be right almost always and wrong exactly where the
-    answer matters.
-
-    Raises a bare :class:`NotImplementedError`, deliberately outside the
-    :class:`~itacart.exceptions.ITACaRTError` family, because "this
-    function is not built yet" is not a statement about the caller's
-    input. A pipeline guarding itself with ``except ITACaRTError`` must
-    not absorb it (``D-3.2``).
+    An unclipped cell is answered from the resolution table rather than
+    from its own vertices. The plane is equal-area by construction, so
+    the two agree to the last bit the projection can carry, and reading
+    the table keeps the common case free of a shoelace sum over
+    twenty-million-metre coordinates. A clipped cell is measured.
 
     Args:
         cell: Compositional index string.
@@ -304,10 +298,15 @@ def effective_cell_area(cell: str) -> float | list[float]:
         Area in square metres for a single terminal cell, or a
         positionally aligned list when the index holds several.
     """
-    raise NotImplementedError(
-        "effective_cell_area requires boundary.cell_shape, delivered in F4; "
-        "use nominal_cell_area(resolution) for cells known to be interior"
-    )
+    from .boundary import absorbs_border, plane_ring, ring_area
+
+    values = []
+    for atom in iter_cells(cell):
+        if not absorbs_border(atom):
+            values.append(nominal_cell_area(get_resolution(atom)))
+        else:
+            values.append(ring_area(plane_ring(atom)[1]))
+    return values[0] if is_atomic(cell) else values
 
 
 # --------------------------------------------------------------------------
