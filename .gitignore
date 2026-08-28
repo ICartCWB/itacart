@@ -23,8 +23,8 @@ docs/source/api/_autosummary/
 notebooks/
 docs/source/api/generated/
 docs/source/_generated/
+docs/project/
 *.egg-info/
 docs/warnings.txt
 _build/
-docs/project/
 *.diff
