@@ -25,8 +25,9 @@ from itacart.constants import (
     refinement_alphabet,
 )
 from itacart.exceptions import NonExistentCellError
-from itacart.geodesy import geodetic_to_sinusoidal
+from itacart.geodesy import geodetic_to_sinusoidal, sinusoidal_to_geodetic
 from itacart.resolutions import cell_size, effective_cell_area, nominal_cell_area
+from tests.reference_points import REFERENCE_POINTS
 
 L1 = cell_size(1)
 
@@ -353,11 +354,162 @@ def test_criterion_4_the_band_alone_is_not_enough() -> None:
     The Chukotka extension reaches 169.5 degrees west. A position further
     east than that, at the same latitude, is ordinary ``NW`` territory
     and the function must say so.
+
+    The two positions differ only in longitude and both sit inside the
+    band, so the longitude condition is the only thing that can separate
+    them. A position outside the band would be rejected by latitude
+    before longitude was ever consulted, and would leave that condition
+    unexercised however many such positions were listed.
     """
-    assert boundary.extension_zone_for_point(-172.0, 68.0) == "CHUKOTKA"
-    assert boundary.extension_zone_for_point(-150.0, 68.0) is None
+    inside_band_beyond_the_limit = REFERENCE_POINTS["bering_sea_west_of_the_limit"]
+    lon, lat = inside_band_beyond_the_limit
+    assert (lon, lat) == (-150.0, 68.0)
+    assert boundary.extension_zone_for_point(-172.0, lat) == "CHUKOTKA"
+    assert boundary.extension_zone_for_point(lon, lat) is None
     assert boundary.extension_zone_for_point(-177.0, -18.0) is None
     assert boundary.extension_zone_for_point(177.0, -18.0) == "FIJI"
+
+
+# --------------------------------------------------------------------------
+# Census of the extension zones
+# --------------------------------------------------------------------------
+
+
+class TestExtensionZoneCensus:
+    """What the two zones actually contain, counted rather than described.
+
+    The zones are realized on whole resolution-1 rows, so the family is
+    finite and can be counted exactly. Sampling would find the last
+    column of a row by luck, since it is one cell out of roughly two
+    thousand.
+    """
+
+    @staticmethod
+    def antemeridian_abscissa(ordinate: float) -> float:
+        """Abscissa of 180 degrees at one ordinate, on the plane."""
+        latitude = sinusoidal_to_geodetic(0.0, abs(ordinate))[1]
+        return abs(geodetic_to_sinusoidal(ANTEMERIDIAN_LON, latitude)[0])
+
+    @classmethod
+    def straddles(cls, cell: str) -> bool:
+        """Whether 180 degrees passes through a cell rather than beside it.
+
+        Judged vertex by vertex against the abscissa at that vertex's own
+        ordinate, because the line leans and the cell leans differently.
+        """
+        ring = boundary.plane_ring(cell)[1]
+        outside = [abs(x) > cls.antemeridian_abscissa(y) + 1e-6 for x, y in ring]
+        return any(outside) and not all(outside)
+
+    @staticmethod
+    def zone_rows() -> list[tuple[str, str, int]]:
+        """Every ``(zone, quadrant, row)`` the two zones are realized on."""
+        out = []
+        for name in EXTENSION_ZONES:
+            quadrant = EXTENSION_ZONES[name].quadrant
+            first, last = boundary.ZONE_ROWS[name]
+            out += [(name, quadrant, row) for row in range(first, last + 1)]
+        return out
+
+    #: Columns either side of the antemeridian a straddling cell can sit
+    #: in. Measured, not guessed, and tied to full enumeration by
+    #: :meth:`test_the_window_finds_what_a_whole_row_finds`.
+    WINDOW = 4
+
+    def test_the_zones_are_realized_on_one_hundred_and_fifty_eight_rows(self) -> None:
+        assert len(self.zone_rows()) == 158
+
+    def test_the_window_finds_what_a_whole_row_finds(self) -> None:
+        """Ties the shortcut below to exhaustive enumeration.
+
+        One row per zone is swept column by column, roughly two thousand
+        cells each, and the straddling cells it finds are the same ones
+        the window finds. Doing that for all one hundred and fifty-eight
+        rows would be exhaustive and slow; doing it for none would make
+        the window an assumption.
+        """
+        for quadrant, row in (("SE", 200), ("NE", 750)):
+            last = boundary.last_lattice_column(quadrant, row, L1)
+            assert last > 500
+            exhaustive = {
+                column
+                for column in range(0, last + 1)
+                if boundary.is_valid_cell(f"{quadrant}({column:04d}/{row:04d})")
+                and self.straddles(f"{quadrant}({column:04d}/{row:04d})")
+            }
+            assert exhaustive == self._windowed(quadrant, row, last)
+
+    def _windowed(self, quadrant: str, row: int, last: int) -> set[int]:
+        centre = int(self.antemeridian_abscissa(row * L1) // L1)
+        return {
+            column
+            for column in range(
+                max(0, centre - self.WINDOW), min(last, centre + self.WINDOW) + 1
+            )
+            if boundary.is_valid_cell(f"{quadrant}({column:04d}/{row:04d})")
+            and self.straddles(f"{quadrant}({column:04d}/{row:04d})")
+        }
+
+    def test_the_cells_the_antemeridian_passes_through_are_parallelograms(self) -> None:
+        """Three hundred and thirty-eight of them, and not one trapezoid.
+
+        A cell the line passes through is an ordinary cell of the
+        extension: the zone reaches past it, so nothing is absorbed and
+        the nominal area holds. Deformation happens at the far edge of
+        the zone, not at 180 degrees.
+        """
+        total, shapes = 0, set()
+        for _, quadrant, row in self.zone_rows():
+            last = boundary.last_lattice_column(quadrant, row, L1)
+            for column in self._windowed(quadrant, row, last):
+                cell = f"{quadrant}({column:04d}/{row:04d})"
+                total += 1
+                shapes.add(boundary.cell_shape(cell))
+                assert boundary.is_equal_area_cell(cell)
+            assert last not in self._windowed(quadrant, row, last)
+        assert total == 338
+        assert shapes == {"parallelogram"}
+
+    def test_the_last_column_of_every_zone_row_is_a_trapezoid(self) -> None:
+        """One per row, one hundred and fifty-eight in all.
+
+        These are where the deformation lands: the last addressable cell
+        absorbs out to the extension limit, which is what makes it a
+        trapezoid and costs it the nominal area.
+        """
+        total, shapes = 0, set()
+        for _, quadrant, row in self.zone_rows():
+            last = boundary.last_lattice_column(quadrant, row, L1)
+            cell = f"{quadrant}({last:04d}/{row:04d})"
+            assert boundary.is_valid_cell(cell)
+            total += 1
+            shapes.add(boundary.cell_shape(cell))
+            assert boundary.absorbs_border(cell)
+            assert not boundary.is_equal_area_cell(cell)
+        assert total == 158
+        assert shapes == {"trapezoid"}
+
+    def test_no_zone_row_holds_a_trapezoid_anywhere_else(self) -> None:
+        """The deformation is one cell per row, never two.
+
+        Swept over whole rows, one per zone, rather than over the window,
+        since a stray trapezoid could sit anywhere.
+        """
+        for quadrant, row in (("SE", 200), ("NE", 750)):
+            last = boundary.last_lattice_column(quadrant, row, L1)
+            trapezoids = [
+                column
+                for column in range(0, last + 1)
+                if boundary.is_valid_cell(f"{quadrant}({column:04d}/{row:04d})")
+                and boundary.cell_shape(f"{quadrant}({column:04d}/{row:04d})")
+                == "trapezoid"
+            ]
+            assert trapezoids == [last]
+
+    def test_each_zone_cuts_at_the_longitude_the_paper_gives(self) -> None:
+        """182 degrees for Fiji, 190.5 for Chukotka, read off the rows."""
+        assert boundary._lon_limit("SE", 200) == pytest.approx(182.0)
+        assert boundary._lon_limit("NE", 750) == pytest.approx(190.5)
 
 
 def test_criterion_4_the_zones_do_not_reach_the_wrong_hemisphere() -> None:

@@ -20,7 +20,8 @@ itacart_core/resolutions.py      this module
 
 Values agree with the origin exactly, to zero ulps, on all 13 metric rows
 for side, area and both ratios. The one divergence is resolution 1 under
-:func:`is_tokenizable_resolution`, and it is F0's ``D-0.12``, not this
+:func:`is_tokenizable_resolution`, and it is F0's reading of the paper,
+not this
 phase's.
 
 The module is a typed, validating facade over the tuples in
@@ -37,11 +38,11 @@ descent in :mod:`itacart.cells` needs the linear factor and child
 enumeration needs the area factor, and substituting one for the other
 yields a wrong cell with no exception raised.
 :func:`linear_refinement_ratio` exists so neither has to be spelled
-inline (``D-3.1``).
+inline.
 
 **Nominal area against effective area.** :func:`nominal_cell_area` takes a
 resolution and :func:`effective_cell_area` takes a cell. The differing
-signatures are deliberate (``D-0.5``): a caller cannot reach for the
+signatures are deliberate: a caller cannot reach for the
 cheaper one without noticing that it never saw the cell.
 """
 
@@ -205,11 +206,11 @@ def linear_refinement_ratio(resolution: int) -> int:
     :func:`refinement_ratio`. Table 1 states both, in different columns,
     and confusing them produces a wrong cell in silence rather than an
     exception, which is the most expensive failure mode in this package
-    (``D-3.1``).
+    which is the linear ratio and not the area one.
 
     Called ``subdivisions_per_axis`` in ``itacart_core/resolutions.py``.
     That version returns ``1`` at resolution 1, treating the base grid as
-    an anchor; this one raises instead (``D-3.4``). A descent loop that
+    an anchor; this one raises instead. A descent loop that
     reads ``1`` for resolution 1 divides the side by one and silently
     produces a cell at the wrong level, which is the same failure mode the
     area/linear split exists to prevent.
@@ -348,7 +349,7 @@ def resolution_for_scale(denominator: int, kind: ScaleKind = "visualization") ->
     from, in both families.
 
     Between table rows the two families bound fineness from opposite
-    sides, because the two rules they encode are opposite (``D-3.3``):
+    sides, because the two rules they encode are opposite:
 
     - ``visualization`` asks that a cell still be **drawable**, so the
       answer is the finest level whose cells stay at or above 0.1 mm on
@@ -453,7 +454,7 @@ def is_tokenizable_resolution(resolution: int) -> bool:
     Resolution 1 is a deliberate divergence from the origin, which
     enumerates only the odd levels. Its side of 10 km is 10^4 m and its
     area 10^8 m2, so it satisfies the stated property; the paper does not
-    enumerate the set either way. F0 took that reading as ``D-0.12`` and
+    enumerate the set either way. F0 took that reading and
     the choice remains F0's to revisit, not this phase's.
 
     Provenance: ``itacart_core/engine.py`` (``IDGGSEngine``) and

@@ -18,9 +18,9 @@ same space).
 Provenance: ``itacart_core/compositional_index.py``, plus the parser from
 the DGGS_Tree notebook.
 
-Grammar accepted by :func:`parse` (``D-2.2`` widens the first production to
-a list, so that :func:`compose` over cells of several quadrants produces a
-string this module can read back)::
+Grammar accepted by :func:`parse`. The first production is a list rather
+than a single root, so that :func:`compose` over cells of several
+quadrants produces a string this module can read back::
 
     index      := root (',' root)*
     root       := QUADRANT subtree?
@@ -33,7 +33,7 @@ string this module can read back)::
 
 The even/odd rule is deliberately absent from that last production: it
 lives in :func:`itacart.constants.refinement_alphabet` and nowhere else
-(``D-0.11``). Writing it a second time here is exactly how ``B-0.1``
+in one place. Writing it a second time here is exactly how the inverted
 happened in the prototype.
 """
 
@@ -138,7 +138,7 @@ latitude. No row anywhere needs 2005.
 
 Whether a named cell exists is decided by
 :func:`itacart.boundary.is_valid_cell`, which is the sole arbiter, and never
-by this bound. Reading 2004 here as a geometric fact is the mistake ``B-3.2``
+by this bound. Reading 2004 here as a geometric fact is the mistake
 recorded: the resolution-1 index space is not a rectangle, and no single
 integer describes its eastern edge.
 """
@@ -702,7 +702,8 @@ def _ancestor_per_cell(index: str, depth: int) -> str | list[str]:
     """Ancestor at ``depth`` components: scalar for one cell, list for many.
 
     ``depth`` 0 is the quadrant, 1 the base cell. The scalar return follows
-    the contract of the two public callers rather than ``D-0.2``: whoever
+    the contract of the two public callers rather than the vectorised
+    convention of the package: whoever
     asks the quadrant of one cell wants a code, not a list of one.
     """
     values: list[str] = []

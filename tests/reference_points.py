@@ -6,10 +6,10 @@ points. A fixture that diverges from the notebook is how an error passes
 the test and shows up in the plot, or the other way round.
 
 ``tests/conftest.py`` should re-export these through its geographic
-fixtures rather than restating the coordinates (``P-1.1``).
+fixtures rather than restating the coordinates.
 
 Every entry is ``(lon_deg, lat_deg)`` -- the core argument order of the
-package (``D-1.2``). The dictionary keys are stable; F4 fixtures for the
+package. The dictionary keys are stable; boundary fixtures for the
 extension zones are expected to build on ``suva`` and ``wrangel``.
 """
 

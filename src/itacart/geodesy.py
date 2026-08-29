@@ -30,23 +30,23 @@ Two consequences shape this module:
 Units. **Every public function takes and returns degrees for angles and
 metres for lengths.** There is no degree/radian boundary inside the public
 surface: the radian domain lives in the ``_rad``-suffixed private helpers
-and nowhere else (``D-1.1``). A unit error at this layer raises nothing --
+and nowhere else. A unit error at this layer raises nothing --
 it produces a plausible wrong answer -- so the rule is uniform rather than
 convenient.
 
 Argument order. The core is ``(lon, lat)``, cartesian ``(x, y)`` order,
-throughout, geodesics included (``D-1.2``). The H3-compatible aliases of
-``D-0.7`` take ``(lat, lng)`` and live in the package facade, not here.
+throughout, geodesics included. The H3-compatible aliases take
+``(lat, lng)`` and live in the package facade, not here.
 
 **Porting warning.** ``itacart_core`` uses the opposite order:
 ``geodesy.forward(lat, lon)`` and ``geodesy.inverse(x, y) -> (lat, lon)``,
 and ``cells.point_to_cell(lat, lon, resolution)`` on top of it. Whoever
-ports ``cells.py`` in F3 has to swap both the call and the unpacking. A
+ports ``cells.py`` has to swap both the call and the unpacking. A
 swap raises nothing -- it lands on a valid coordinate somewhere else on
 the globe -- so it is pinned by ``test_argument_order_is_lon_lat_not_lat_lon``
 rather than left to a comment.
 
-No PROJ at runtime (``D-0.3``): both equations are implemented directly.
+No PROJ at runtime: both equations are implemented directly.
 ``pyproj`` appears only in tests marked ``crosscheck``.
 """
 
@@ -83,7 +83,7 @@ __all__ = [
 # orders of magnitude finer than the 1 cm cell of resolution 13. It is the
 # implementation the itacart-app validated and the one ported here; the
 # composite-Simpson quadrature named in the phase briefing ships alongside
-# it as an independent reference (D-1.3).
+# it as an independent reference.
 
 _N3: Final[float] = (WGS84_A - WGS84_B) / (WGS84_A + WGS84_B)
 """Third flattening of the WGS84 ellipsoid."""
@@ -120,7 +120,7 @@ float64: one ULP of the meridian quadrant (1.0e7 m) is 1.86e-9 m, so a
 tolerance ten times finer than that lies below the representable
 resolution of the result and the refinement loop would never exit on the
 comparison. The tolerance is therefore floored at four ULP of the running
-estimate (``P-1.2``).
+estimate.
 """
 
 QUADRATURE_MAX_INTERVALS: Final[int] = 4096
@@ -249,7 +249,7 @@ def meridian_arc(lat_deg: float) -> float:
     :func:`meridian_arc_quadrature` evaluates the same integral by
     composite Simpson quadrature and agrees to a few nanometres. It exists
     as an independent check on this one; this is the implementation on the
-    hot path (``D-1.3``).
+    hot path.
 
     Args:
         lat_deg: Geodetic latitude, in degrees.
@@ -288,7 +288,7 @@ def meridian_arc_quadrature(
     The effective tolerance is ``max(tol, 4 * ulp(estimate))``. At the
     quadrant one ULP is 1.86e-9 m, so a tolerance finer than that cannot
     be met in float64 and asking for it would only spend intervals
-    (``P-1.2``).
+    at no gain in accuracy.
 
     Args:
         lat_deg: Geodetic latitude, in degrees.
@@ -423,9 +423,9 @@ def geodetic_to_sinusoidal(lon_deg: float, lat_deg: float) -> tuple[float, float
     Note:
         Longitude is not range-checked. Eq. (1) is linear in lambda and
         the addressable ITACaRT domain -- including the antemeridian
-        extension zones of section 3.2 -- is decided in ``boundary``
-        (F4). Enforcing ``[-180, 180]`` here would pre-empt that
-        decision and reject the extension zones (``D-1.5``).
+        extension zones of section 3.2 -- is decided in ``boundary``.
+        Enforcing ``[-180, 180]`` here would pre-empt that decision and
+        reject the extension zones.
 
     Example:
         >>> x, y = geodetic_to_sinusoidal(0.0, 0.0)
@@ -472,7 +472,7 @@ def sinusoidal_to_geodetic(
         longitude projects to ``x = 0``, so longitude is not recoverable.
         The function returns ``0.0`` there by convention rather than
         raising: the pole is a legitimate position, only its longitude is
-        undefined (``D-1.4``).
+        undefined.
     """
     _check_finite(x_m, "x_m")
     lat_deg = inverse_meridian_arc(y_m, tol=tol, max_iter=max_iter)
@@ -646,7 +646,7 @@ def inverse_geodesic(
         convention there, not a bearing -- the geodesic is degenerate and
         has no direction. Raising instead would force every caller to
         guard the duplicated-vertex case that F7 deduplication exists to
-        absorb (``D-1.6``).
+        absorb.
 
     Example:
         >>> d, az = inverse_geodesic(0.0, 0.0, 0.0, 1.0)
@@ -696,7 +696,7 @@ def direct_geodesic(
             outside ``[-90, 90]``, or ``distance_m`` is negative. A
             negative distance is a sign error at the call site, not a
             reverse traverse; accepting it would return a plausible point
-            on the opposite side (``D-1.5``).
+            on the opposite side.
         ConvergenceError: If the iteration does not converge.
     """
     lat1 = _check_latitude(lat1_deg, "lat1_deg")

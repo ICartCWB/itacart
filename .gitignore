@@ -24,7 +24,6 @@ notebooks/
 docs/source/api/generated/
 docs/source/_generated/
 docs/project/
-*.egg-info/
 docs/warnings.txt
 _build/
 *.diff

@@ -26,17 +26,7 @@ mapping, tessellated directly on the WGS84 ellipsoid.
    :maxdepth: 2
    :caption: Reference
 
-   api/cells
-   api/index_module
-   api/resolutions
-   api/hierarchy
-   api/topology
-   api/boundary
-   api/geometry
-   api/geodesy
-   api/serialization
-   api/interop
-   api/engine
+   api/index
 
 .. toctree::
    :maxdepth: 2

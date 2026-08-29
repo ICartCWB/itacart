@@ -38,6 +38,7 @@ from .boundary import (
     crosses_antemeridian,
     extension_bounds,
     extension_zone,
+    extension_zone_for_point,
     is_boundary_cell,
     is_equal_area_cell,
     is_extension_cell,
@@ -53,6 +54,7 @@ from .cells import (
     cell_to_polygon,
     cell_to_sinusoidal,
     geo_to_cell,
+    is_quadrant_boundary_cell,
     sinusoidal_to_cell,
 )
 from .constants import (
@@ -68,24 +70,38 @@ from .constants import (
     WGS84_A,
     WGS84_E2,
     WGS84_F,
+    refinement_alphabet,
 )
 from .engine import ITACaRT, conformance, crs, describe
 from .exceptions import (
     AntemeridianError,
+    ConvergenceError,
+    DensificationError,
     DomainError,
     GeometryError,
+    IncompatibleProfileError,
     InvalidIndexError,
+    InvalidQuadrantError,
+    InvalidRefinementCodeError,
     ITACaRTError,
     MalformedBlobError,
+    MaxResolutionError,
+    MinResolutionError,
     NonAtomicIndexError,
     NonExistentCellError,
     ResolutionError,
     SerializationError,
+    UnsupportedGeometryTypeError,
 )
 from .geodesy import (
     direct_geodesic,
     geodetic_to_sinusoidal,
     inverse_geodesic,
+    inverse_meridian_arc,
+    meridian_arc,
+    meridian_arc_quadrature,
+    meridian_radius,
+    prime_vertical_radius,
     sinusoidal_to_geodetic,
 )
 from .geometry import (
@@ -98,6 +114,7 @@ from .geometry import (
     vertex_to_cell,
 )
 from .hierarchy import (
+    child_position,
     common_ancestor,
     compact_cells,
     contains,
@@ -117,6 +134,7 @@ from .index import (
     is_valid_index,
     iter_cells,
     normalize,
+    parse,
     quadrant_of,
     split_components,
 )
@@ -132,6 +150,7 @@ from .resolutions import (
     effective_cell_area,
     get_resolution,
     is_tokenizable_resolution,
+    linear_refinement_ratio,
     nominal_cell_area,
     refinement_ratio,
     resolution_for_scale,
@@ -139,6 +158,7 @@ from .resolutions import (
     scale_for_resolution,
 )
 from .serialization import (
+    count_vertices,
     decode_geometry,
     decode_tree,
     deserialize_from_blob,
@@ -146,12 +166,19 @@ from .serialization import (
     encode_tree,
     geometry_hash,
     geometry_to_tree,
+    is_ancestor_binary,
+    iter_leaves,
+    prefix_at_resolution_binary,
+    resolution_of_binary,
     serialize_to_blob,
+    validate_geometry,
+    validate_tree,
 )
 from .topology import (
     are_neighbor_cells,
     cell_to_edges,
     cells_to_directed_edge,
+    deflect,
     directed_edge_to_cells,
     get_neighbor,
     grid_disk,
@@ -206,7 +233,6 @@ def latlng_to_cell(lat: float, lng: float, resolution: int) -> str:
 
 def cell_to_latlng(cell: str) -> tuple[float, float]:
     """H3-style alias of :func:`cell_to_centroid` returning ``(lat, lng)``."""
-    # P-0.8: behavior regarding the compositional index and the F3 decision.
     lon, lat = cast("tuple[float, float]", cell_to_centroid(cell))
     return (lat, lon)
 
@@ -343,4 +369,31 @@ __all__ = [
     "cell_to_latlng",
     "cell_to_parent",
     "cell_to_children",
+    "extension_zone_for_point",
+    "is_quadrant_boundary_cell",
+    "refinement_alphabet",
+    "ConvergenceError",
+    "DensificationError",
+    "IncompatibleProfileError",
+    "InvalidQuadrantError",
+    "InvalidRefinementCodeError",
+    "MaxResolutionError",
+    "MinResolutionError",
+    "UnsupportedGeometryTypeError",
+    "inverse_meridian_arc",
+    "meridian_arc",
+    "meridian_arc_quadrature",
+    "meridian_radius",
+    "prime_vertical_radius",
+    "child_position",
+    "parse",
+    "linear_refinement_ratio",
+    "count_vertices",
+    "is_ancestor_binary",
+    "iter_leaves",
+    "prefix_at_resolution_binary",
+    "resolution_of_binary",
+    "validate_geometry",
+    "validate_tree",
+    "deflect",
 ]

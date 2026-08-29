@@ -99,7 +99,7 @@ _ROW_LETTERS: tuple[str, ...] = tuple(
 
 Sliced out of :func:`~itacart.constants.refinement_alphabet` rather than
 written out, so the north-south orientation has exactly one definition in
-the package. ``B-0.1`` was a second, inverted copy of that rule.
+the package. An earlier version held a second, inverted copy of it.
 """
 
 
@@ -113,7 +113,7 @@ def _from_path(components: list[str]) -> str:
 
     Inverse of :func:`itacart.index.split_components`. The origin calls
     this ``compositional_index.from_path``; the package has no public
-    counterpart, so it lives here privately (``P-3.3``). It duplicates
+    counterpart, so it lives here privately. It duplicates
     ``index._render_path``, and promoting one of the two is the chat
     ponte's call, not this phase's.
     """
@@ -411,12 +411,12 @@ def _anchor_on_plane(cell: str) -> tuple[float, float, float, str]:
     requirement 12 asks the anchor to have.
 
     Raising :class:`~itacart.exceptions.ResolutionError` rather than
-    :class:`~itacart.exceptions.InvalidIndexError` (``D-3.7``): by
-    ``D-2.3`` a bare quadrant code is a *valid* index, so claiming
+    :class:`~itacart.exceptions.InvalidIndexError`: by
+    the index grammar a bare quadrant code is a *valid* index, so claiming
     malformation would be false. What fails is the operation at this
     resolution, which is the case ``ResolutionError`` names -- "outside
     the valid range or invalid for the operation". Same distinction as
-    ``D-2.8``, and it keeps this module consistent with
+    the resolution rules, and it keeps this module consistent with
     :mod:`itacart.resolutions`, which already answers resolution 0 with
     ``ResolutionError`` in ``cell_size`` and ``nominal_cell_area``.
 
@@ -467,7 +467,7 @@ def _reflections(quadrant: str) -> int:
     Zero for NE, one for NW and SE, two for SW. Each reflection reverses
     ring orientation, so an odd count means the mirrored vertex sequence
     must be reversed to stay counter-clockwise. Getting this wrong is
-    ``B-0.3``: the origin re-signs the coordinates and stops there,
+    The origin re-signs the coordinates and stops there,
     yielding clockwise rings in exactly the two single-reflection
     quadrants.
     """
@@ -498,7 +498,7 @@ def _vertices_on_plane(cell: str) -> list[tuple[float, float]]:
 def _per_cell(index: str, values: list[object]) -> object:
     """Return a scalar for an atomic index and a list for a composed one.
 
-    ``D-0.2``: the vectorised return is positionally aligned with
+    The vectorised return is positionally aligned with
     :func:`itacart.index.decompose`, and a single-cell index still gets a
     bare value rather than a list of one.
     """

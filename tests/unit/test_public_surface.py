@@ -1,0 +1,149 @@
+"""The package's public contract, stated as an invariant rather than a list.
+
+Four separate phases each noticed that some name declared public by a
+module never reached the top of the package, and each of them wrote the
+missing name into a note instead of into a check. A list of names goes
+stale the moment a module gains one; an invariant does not.
+
+The rule is: whatever a module declares in its own ``__all__`` is
+importable from ``itacart`` and appears in ``itacart.__all__``. Nothing
+here enumerates names, so a module that grows a public function is
+covered the day it grows it.
+"""
+
+from __future__ import annotations
+
+import importlib
+from types import ModuleType
+
+import pytest
+
+import itacart
+
+#: Submodules that declare a public contract. Named rather than
+#: discovered, so that a new module cannot join the package and escape
+#: the invariant by being overlooked; ``test_every_submodule_is_listed``
+#: is what keeps this list honest.
+CONTRACT_MODULES = (
+    "boundary",
+    "cells",
+    "engine",
+    "exceptions",
+    "geodesy",
+    "geometry",
+    "hierarchy",
+    "index",
+    "interop",
+    "resolutions",
+    "serialization",
+    "topology",
+)
+
+#: The one submodule that declares no ``__all__``, so the invariant
+#: cannot reach it. Its public surface is whatever the package happens to
+#: re-export, which is a contract nobody wrote down.
+MODULES_WITHOUT_CONTRACT = ("constants",)
+
+
+def _module(name: str) -> ModuleType:
+    return importlib.import_module(f"itacart.{name}")
+
+
+@pytest.mark.parametrize("name", CONTRACT_MODULES)
+def test_every_declared_name_reaches_the_package_top(name: str) -> None:
+    module = _module(name)
+    declared = getattr(module, "__all__", None)
+    assert declared, f"itacart.{name} declares no __all__"
+    unreachable = [entry for entry in declared if not hasattr(itacart, entry)]
+    unlisted = [entry for entry in declared if entry not in itacart.__all__]
+    assert unreachable == []
+    assert unlisted == []
+
+
+@pytest.mark.parametrize("name", CONTRACT_MODULES)
+def test_the_package_re_exports_the_same_object(name: str) -> None:
+    """Re-export, not a second definition.
+
+    Importing a name from the top has to give back the object the module
+    defines, or the package grows a private copy that drifts.
+    """
+    module = _module(name)
+    for entry in getattr(module, "__all__", ()):
+        assert getattr(itacart, entry) is getattr(module, entry), entry
+
+
+def test_the_package_contract_holds_no_duplicates() -> None:
+    assert len(itacart.__all__) == len(set(itacart.__all__))
+
+
+def test_every_name_in_the_package_contract_resolves() -> None:
+    assert [entry for entry in itacart.__all__ if not hasattr(itacart, entry)] == []
+
+
+def test_every_submodule_is_listed() -> None:
+    """No submodule may sit outside both lists.
+
+    Without this, adding a module and forgetting to name it above would
+    make the invariant silently narrower rather than fail.
+    """
+    import pkgutil
+
+    found = {
+        info.name
+        for info in pkgutil.iter_modules(itacart.__path__)
+        if not info.name.startswith("_")
+    }
+    accounted = set(CONTRACT_MODULES) | set(MODULES_WITHOUT_CONTRACT)
+    assert found - accounted == set()
+
+
+@pytest.mark.parametrize("name", MODULES_WITHOUT_CONTRACT)
+def test_the_uncovered_module_is_still_uncovered(name: str) -> None:
+    """Fails the day the gap is closed, which is the signal to close it.
+
+    Constants has no ``__all__``, so which of its names are public is a
+    question the package answers by accident. Giving it one is a decision
+    about the public surface and belongs to whoever makes that decision,
+    not here; this test makes sure the gap cannot be forgotten.
+    """
+    assert getattr(_module(name), "__all__", None) is None
+
+
+# --------------------------------------------------------------------------
+# H3-compatible aliases
+# --------------------------------------------------------------------------
+
+
+class TestH3Aliases:
+    """The aliases swap argument order, and nothing else.
+
+    They exist so that code written against H3 v4 reads unchanged, which
+    means the only thing worth checking is that the swap happens and that
+    the underlying answer is untouched. They were the last three lines of
+    the package without a test.
+    """
+
+    def test_latlng_to_cell_swaps_the_argument_order(
+        self, praca_da_se: tuple[float, float]
+    ) -> None:
+        lon, lat = praca_da_se
+        assert itacart.latlng_to_cell(lat, lon, 13) == itacart.geo_to_cell(lon, lat, 13)
+
+    def test_cell_to_latlng_swaps_the_returned_order(
+        self, praca_da_se: tuple[float, float]
+    ) -> None:
+        lon, lat = praca_da_se
+        cell = itacart.geo_to_cell(lon, lat, 13)
+        centroid = itacart.cell_to_centroid(cell)
+        assert itacart.cell_to_latlng(cell) == (centroid[1], centroid[0])
+
+    def test_the_two_aliases_invert_each_other(
+        self, praca_da_se: tuple[float, float]
+    ) -> None:
+        lon, lat = praca_da_se
+        cell = itacart.latlng_to_cell(lat, lon, 13)
+        back_lat, back_lng = itacart.cell_to_latlng(cell)
+        assert itacart.latlng_to_cell(back_lat, back_lng, 13) == cell
+
+    def test_cell_to_parent_is_get_parent(self) -> None:
+        assert itacart.cell_to_parent is itacart.get_parent

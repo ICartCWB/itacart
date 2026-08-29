@@ -8,7 +8,7 @@ Provenance: ``itacart_core/resolutions.py`` and Table 1 of the paper.
 The module holds data, not behaviour. The single exception is
 :func:`refinement_alphabet`, a lookup over ``REFINEMENT_ALPHABET`` that
 exists so the even/odd predicate is written once in the whole package
-(see the ``B-0.1`` warning on :data:`QUINARY_CODES`).
+(see the warning on :data:`QUINARY_CODES`).
 
 Reading note: the section comments follow the paper's own numbering, and
 every constant carries the figure, table or equation it is taken from, so
@@ -28,7 +28,8 @@ from .exceptions import ResolutionError
 # WGS84 ellipsoid (paper, section 3)
 # --------------------------------------------------------------------------
 # Defining parameters are ``a`` and ``1/f``; everything else is derived at
-# import time (decision D-0.9). tests/unit/test_constants.py audits each
+# import time, rather than being transcribed as decimals.
+# tests/unit/test_constants.py audits each
 # derived value against the published NGA figure.
 
 WGS84_A: Final[float] = 6378137.0
@@ -52,7 +53,7 @@ WGS84_E: Final[float] = math.sqrt(WGS84_E2)
 WGS84_EP2: Final[float] = WGS84_E2 / (1.0 - WGS84_E2)
 """Second eccentricity squared, ``e^2 / (1 - e^2)``. Used by the meridian arc."""
 
-# D-1.10: source is GeographicLib, read through
+# Source is GeographicLib, read through
 # pyproj.Geod(ellps="WGS84").inv(0, 0, 0, 90). Deliberately NOT the value our
 # own series computes: the point of this constant is to be an independent
 # target, and seeding it from our arithmetic would make F1 compare the code
@@ -79,7 +80,7 @@ SINUSOIDAL_PROJ: Final[str] = (
 
 NOTE: provided for interoperability only. The package computes the
 ellipsoidal sinusoidal ("parallels plane") projection directly from
-Eq. (1) and (2) of the paper; it does not call PROJ at runtime (D-0.3).
+Eq. (1) and (2) of the paper; it does not call PROJ at runtime.
 """
 
 PRIME_MERIDIAN_LON: Final[float] = 0.0
@@ -329,7 +330,8 @@ def refinement_alphabet(resolution: int) -> tuple[str, ...]:
     """Return the refinement alphabet addressing ``resolution``.
 
     This is the only place in the package where the even/odd rule is
-    written, which is the whole point: ``B-0.1`` was a second, inverted
+    written, which is the whole point: an earlier version held a second,
+    inverted
     copy of it living in the parser.
 
     Args:

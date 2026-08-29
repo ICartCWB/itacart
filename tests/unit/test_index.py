@@ -1,9 +1,10 @@
 """Tests for :mod:`itacart.index`.
 
 The suite is organised by acceptance criterion of F2, then by surface.
-Anything named ``test_b_0_1_*`` is a permanent regression guard: the
-prototype mapped even resolutions to ``A1``-``E5`` and odd ones to
-``1``-``4``, which is the inversion the paper's section 3.1 forbids.
+The tests around the even and odd alphabets are permanent regression
+guards: the prototype mapped even resolutions to ``A1``-``E5`` and odd
+ones to ``1``-``4``, which is the inversion the paper's section 3.1
+forbids.
 """
 
 from __future__ import annotations
@@ -136,7 +137,7 @@ def test_paper_example_roundtrips(paper_example_index: str) -> None:
 
 
 def test_sydney_cell_is_a_resolution_7_single_path(sydney_cell: str) -> None:
-    """P-2.3: the fixture docstring claims resolution 9, the string is 7."""
+    """The fixture docstring claims resolution 9; the string is 7."""
     assert ix.is_atomic(sydney_cell)
     assert len(ix.split_components(sydney_cell)) - 1 == 7
 
@@ -334,7 +335,7 @@ def test_req_13_canonical_form_survives_a_decompose_compose_detour() -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 5 - B-0.1, the even/odd alphabets
+# Criterion 5 -- the even/odd alphabets
 # --------------------------------------------------------------------------
 
 
@@ -344,7 +345,8 @@ def test_every_resolution_accepts_exactly_its_own_alphabet(resolution: int) -> N
 
     Both directions are checked at once: every code of the level's own
     alphabet parses, and every code of the other alphabet is refused. That
-    is the whole content of ``B-0.1``, stated once for all twelve levels.
+    is the whole content of the inversion guard, stated once for all
+    twelve levels.
     """
     own = refinement_alphabet(resolution)
     other = QUINARY_CODES if own is QUATERNARY_CODES else QUATERNARY_CODES
@@ -355,30 +357,30 @@ def test_every_resolution_accepts_exactly_its_own_alphabet(resolution: int) -> N
 
 
 @pytest.mark.parametrize("resolution", [2, 4, 6, 8, 10, 12])
-def test_b_0_1_even_resolutions_are_quaternary(resolution: int) -> None:
+def test_even_resolutions_are_quaternary(resolution: int) -> None:
     """Even resolutions take 1-4. The prototype had A1-E5 here."""
     assert refinement_alphabet(resolution) == QUATERNARY_CODES
     assert ix.is_valid_index(_chain_to(resolution - 1, tail="4"))
 
 
 @pytest.mark.parametrize("resolution", [3, 5, 7, 9, 11, 13])
-def test_b_0_1_odd_resolutions_are_quinary(resolution: int) -> None:
+def test_odd_resolutions_are_quinary(resolution: int) -> None:
     """Odd resolutions from 3 take A1-E5. The prototype had 1-4 here."""
     assert refinement_alphabet(resolution) == QUINARY_CODES
     assert ix.is_valid_index(_chain_to(resolution - 1, tail="E5"))
 
 
-def test_b_0_1_even_resolution_rejects_a_quinary_code() -> None:
+def test_even_resolution_rejects_a_quinary_code() -> None:
     with pytest.raises(InvalidRefinementCodeError):
         ix.parse("SE(1400/0374(C2))")
 
 
-def test_b_0_1_odd_resolution_rejects_a_quaternary_code() -> None:
+def test_odd_resolution_rejects_a_quaternary_code() -> None:
     with pytest.raises(InvalidRefinementCodeError):
         ix.parse("SE(1400/0374(3(2)))")
 
 
-def test_b_0_1_rejection_names_the_expected_alphabet() -> None:
+def test_rejection_names_the_expected_alphabet() -> None:
     with pytest.raises(InvalidRefinementCodeError, match="A1..E5"):
         ix.parse("SE(1400/0374(3(2)))")
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 import itacart
 
 
@@ -20,18 +18,24 @@ def test_paper_doi_is_pinned() -> None:
     assert itacart.__paper_doi__ == "10.14393/rbcv77n0a-79281"
 
 
-@pytest.mark.xfail(raises=NotImplementedError, reason="stub")
-def test_hierarchy_is_still_a_stub() -> None:
-    """The one entry point of this file that has not landed yet.
+def test_get_parent_climbs_to_the_quadrant() -> None:
+    """The former stub, as an assertion.
 
-    Kept as the file's own reminder that ``hierarchy`` is unimplemented.
-    When F5 lands, this turns red rather than passing quietly, which is
-    the failure mode ``test_geo_to_cell_stub`` had: it was written in F0
-    against a ``geo_to_cell`` that raised, F3 implemented the function,
-    and the non-strict marker turned the pass into a silent ``xpass``
-    that nobody read.
+    It was written against a ``get_parent`` that raised, and stayed
+    marked as expected-to-fail after the function landed. The marker was
+    not strict, so the pass registered as a silent ``xpass`` that nobody
+    read, which is the same failure mode ``test_geo_to_cell_stub`` had
+    before it. Strict expected-failure is now on for the whole suite, so
+    a marker that stops describing reality turns red instead of quiet.
+
+    A resolution-1 cell has the quadrant as its parent, and the quadrant
+    is where the climb stops: it is resolution 0 and has no coordinate
+    pair to truncate.
     """
-    itacart.get_parent("SE(1400/0374)")
+    cell = "SE(1400/0374)"
+    assert itacart.get_resolution(cell) == 1
+    assert itacart.get_parent(cell) == "SE"
+    assert itacart.get_parent(cell, 0) == "SE"
 
 
 def test_geo_to_cell_reaches_the_finest_resolution(

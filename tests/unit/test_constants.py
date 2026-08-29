@@ -59,7 +59,7 @@ def _alphabet_label(resolution: int) -> str:
 
 
 # --------------------------------------------------------------------------
-# Criterio de aceite 4 - toda constante da Tabela 1 confere, valor a valor
+# Criterion 4 -- every constant of Table 1 checks out, value by value
 # --------------------------------------------------------------------------
 
 
@@ -99,7 +99,7 @@ def test_resolution_zero_has_no_metric_size() -> None:
 
 
 # --------------------------------------------------------------------------
-# Invariantes cruzadas da Tabela 1 (F0_Abertura, secao 4.1)
+# Cross-invariants of Table 1
 # --------------------------------------------------------------------------
 
 
@@ -160,7 +160,7 @@ def test_resolution_table_agrees_with_the_component_tuples() -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterio de aceite 5 - QUINARY_CODES, e a armadilha do B-0.1
+# Criterion 5 -- QUINARY_CODES, and the inversion trap
 # --------------------------------------------------------------------------
 
 
@@ -189,8 +189,8 @@ def test_quaternary_codes() -> None:
     assert c.QUINARY_GRID_SIZE == 5
 
 
-def test_b_0_1_even_is_quaternary_odd_is_quinary() -> None:
-    """Regression guard for B-0.1: the classes must not be inverted."""
+def test_even_is_quaternary_odd_is_quinary() -> None:
+    """Regression guard: the two alphabets must not be inverted."""
     for resolution in range(2, 14):
         alphabet = c.refinement_alphabet(resolution)
         if resolution % 2 == 0:
@@ -231,7 +231,7 @@ def test_refinement_alphabet_rejects_non_int(resolution: object) -> None:
 
 
 # --------------------------------------------------------------------------
-# WGS84 - decisao D-0.9, derivar e auditar contra os valores publicados
+# WGS84 -- derived at import time and audited against the published values
 # --------------------------------------------------------------------------
 
 
@@ -278,7 +278,7 @@ def test_res1_cell_counts_follow_from_the_projection() -> None:
 def test_res1_full_cell_count_reconciles_with_the_max_index() -> None:
     """N full cells occupy indices 0..N-1, so the partial one is index N.
 
-    That is what makes the paper's "approximately 2,003 cells" (secao 3.1)
+    That is what makes the paper's "approximately 2,003 cells" (section 3.1)
     and Table 1's ``2003/1000`` upper bound the same statement rather than
     an off-by-one between them.
     """
@@ -343,7 +343,7 @@ def test_triangle_preserves_the_parallelogram_area() -> None:
 
 
 # --------------------------------------------------------------------------
-# Zonas de extensao (artigo, Figura 5)
+# Extension zones (paper, Figure 5)
 # --------------------------------------------------------------------------
 
 
@@ -452,7 +452,7 @@ def test_extension_zones_mapping_is_read_only() -> None:
 
 
 # --------------------------------------------------------------------------
-# Resolucoes tokenizaveis (decisao D-0.11, a confirmar em F3)
+# Tokenizable resolutions
 # --------------------------------------------------------------------------
 
 

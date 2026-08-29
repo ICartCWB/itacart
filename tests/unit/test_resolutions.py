@@ -180,7 +180,7 @@ def test_resolution_for_scale_inverts_scale_for_resolution(
 
 
 def test_between_rows_the_two_families_answer_differently() -> None:
-    """D-3.3, stated as the example that motivates it.
+    """The two scale families, stated as the example that motivates them.
 
     At 1:2 000 a resolution-11 cell would draw at 0.05 mm and vanish, so
     the drawable answer is 10. At 1:3 000 the analysis rule asks for cells
@@ -215,7 +215,7 @@ def test_resolution_for_scale_rejects_an_unknown_family() -> None:
 
 
 # ==========================================================================
-# Refinement ratios -- the area/linear distinction (D-3.1)
+# Refinement ratios -- the area/linear distinction
 # ==========================================================================
 
 
@@ -242,7 +242,7 @@ def test_linear_ratio_is_the_square_root_of_the_area_ratio(resolution: int) -> N
 
 @pytest.mark.parametrize("resolution", REFINED_RESOLUTIONS)
 def test_linear_ratio_is_the_actual_side_ratio_of_the_table(resolution: int) -> None:
-    """D-3.1 measured, not asserted.
+    """The area/linear distinction measured, not asserted.
 
     This is the check that would catch a descent written against the area
     ratio: the side of a child really does shrink by 2 or by 5, and the
@@ -314,7 +314,7 @@ def test_get_resolution_of_figure_7_reports_the_mixture(
 
 
 # ==========================================================================
-# effective_cell_area -- stub until F4 (D-3.2)
+# effective_cell_area
 # ==========================================================================
 
 
@@ -351,7 +351,8 @@ def test_effective_cell_area_is_positionally_aligned() -> None:
 def test_effective_cell_area_does_not_masquerade_as_a_domain_error() -> None:
     """An unbuilt function must not be swallowed by ``except ITACaRTError``.
 
-    Same family of mistake as B-1.1 and B-2.1, in the other direction:
+    Same family of mistake as the earlier transcription errors, in the
+    other direction:
     there the package leaked a bare exception, here it must refuse to
     capture one.
     """
@@ -468,7 +469,7 @@ def test_sides_and_areas_reproduce_the_origin_exactly(resolution: int) -> None:
 
     The origin derives every figure from an exact integer centimetre
     count, so agreement here is exact by construction and any drift is a
-    real transcription error rather than a libm difference (``D-2.10``).
+    real transcription error rather than a libm difference.
     """
     side_cm = ORIGIN_BASE_LENGTH_CM[resolution]
     assert res.cell_size(resolution) == side_cm / 100.0
@@ -476,7 +477,7 @@ def test_sides_and_areas_reproduce_the_origin_exactly(resolution: int) -> None:
 
 
 def test_divergence_resolution_one_is_tokenizable_here_but_not_in_the_origin() -> None:
-    """D-0.12, pinned so the divergence cannot drift back unnoticed.
+    """Pinned so the divergence cannot drift back unnoticed.
 
     ``itacart_core`` enumerates only the odd levels. Resolution 1 has a
     side of 10^4 m and an area of 10^8 m2, so it meets the stated
@@ -487,7 +488,7 @@ def test_divergence_resolution_one_is_tokenizable_here_but_not_in_the_origin() -
 
 
 def test_divergence_the_linear_ratio_refuses_resolution_one() -> None:
-    """D-3.4. The origin returns 1 here; returning 1 is the trap.
+    """The origin returns 1 here; returning 1 is the trap.
 
     ``subdivisions_per_axis(1) == 1`` lets a descent loop divide the side
     by one and emit a cell one level shallower than asked, with nothing

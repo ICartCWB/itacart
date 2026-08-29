@@ -111,7 +111,7 @@ def test_criterion_1_the_reference_cells_are_not_on_a_quadrant_axis(
 ) -> None:
     """The scoping of criterion 1, asserted rather than assumed.
 
-    The criterion holds for cells off the quadrant axes (``D-3.91``). If
+    The criterion holds for cells off the quadrant axes. If
     a reference point ever drifted onto an axis, the criterion-1 test
     above would start passing vacuously; this makes that impossible.
     """
@@ -229,7 +229,7 @@ def test_the_polar_row_holds_only_the_meridian_triangle() -> None:
     assert boundary.is_equal_area_cell("NE(0000/1000)") is False
 
 
-def test_b_3_2_the_resolution_one_index_space_is_not_a_rectangle() -> None:
+def test_the_resolution_one_index_space_is_not_a_rectangle() -> None:
     """``RES1_MAX_INDEX`` names a bounding-box corner, not a cell.
 
     The addressable ``X`` range shrinks with ``cos(phi)``: 2003 columns
@@ -295,10 +295,10 @@ def test_is_quadrant_boundary_cell_is_vectorised() -> None:
 
 
 def test_resolution_zero_has_no_anchor() -> None:
-    """D-3.7. ``"NE"`` is a valid index; the operation is what fails.
+    """``"NE"`` is a valid index; the operation is what fails.
 
     Claiming ``InvalidIndexError`` would assert malformation, which
-    ``D-2.3`` says is false. ``ResolutionError`` names exactly this case
+    the index grammar says is false. ``ResolutionError`` names exactly this case
     -- invalid for the operation -- and matches how
     :mod:`itacart.resolutions` already answers resolution 0.
     """
@@ -379,7 +379,7 @@ def test_criterion_2_vertices_match_the_closed_form_of_the_paper(
 
 
 # ==========================================================================
-# Criterion 3 -- B-0.3, mirroring across all four quadrants
+# Criterion 3 -- mirroring across all four quadrants
 # ==========================================================================
 
 
@@ -424,7 +424,7 @@ def test_criterion_3_the_southwest_composes_both_reflections() -> None:
 
 
 # ==========================================================================
-# Criterion 4 -- B-0.2, single traversal
+# Criterion 4 -- single traversal
 # ==========================================================================
 
 
@@ -472,7 +472,7 @@ def test_criterion_4_cost_grows_linearly_not_quadratically() -> None:
     Doubling the depth roughly doubles the work under a single traversal
     and roughly quadruples it under the origin's recursion. The bound is
     deliberately loose: this runs on the CI matrix, where the machine
-    varies, and the lesson of D-2.90 is that hand-written numbers do not
+    varies, and the lesson of earlier phases is that hand-written numbers do not
     survive. The measured figure goes in the handoff, not here.
     """
 
@@ -488,7 +488,7 @@ def test_criterion_4_cost_grows_linearly_not_quadratically() -> None:
 
 
 # ==========================================================================
-# Criterion 5 -- B-0.4, the centroid exists and is geodetic
+# Criterion 5 -- the centroid exists and is geodetic
 # ==========================================================================
 
 
@@ -523,7 +523,7 @@ def test_criterion_5_centroid_sits_half_a_side_above_the_anchor(
 
 
 def test_criterion_5_centroid_differs_from_the_anchor() -> None:
-    """The distinction D-0.5 exists to enforce, stated once."""
+    """The anchor and the centroid are different points, stated once."""
     cell = cells.geo_to_cell(13.0, 42.0, 5)
     assert cells.cell_to_centroid(cell) != cells.cell_to_anchor(cell)
 
@@ -569,7 +569,8 @@ def test_criterion_9_orientation_1_the_y_index_grows_northward() -> None:
     """Measured, against the paper's prose, which reads the other way.
 
     Two positions on the same meridian: the northern one must carry the
-    larger Y. B-1.2 measured the same thing on the projection; this pins
+    larger Y. The geodesy suite measures the same thing on the projection;
+    this pins
     it on the index, which is what F4 and F6 consume.
     """
     south = split_components(cells.geo_to_cell(20.0, 10.0, 1))[1]
@@ -618,7 +619,7 @@ def test_criterion_9_orientation_3_the_letter_grows_from_a_south_to_e_north() ->
 
 
 # ==========================================================================
-# Vectorised semantics (D-0.2)
+# Vectorised semantics
 # ==========================================================================
 
 
@@ -680,7 +681,7 @@ def test_cell_to_sinusoidal_inverts_the_plane_entry_point(resolution: int) -> No
 
 
 # ==========================================================================
-# Boundary scope (D-3.5) and input validation
+# Boundary scope and input validation
 # ==========================================================================
 
 
@@ -762,7 +763,7 @@ def test_the_plane_entry_point_rejects_non_finite_coordinates(bogus: float) -> N
 
 
 # ==========================================================================
-# The index assembler (P-3.3)
+# The index assembler
 # ==========================================================================
 
 

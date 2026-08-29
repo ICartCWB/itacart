@@ -42,7 +42,7 @@ except ImportError:  # pragma: no cover
 pyproj = _pyproj
 
 requires_pyproj = pytest.mark.skipif(
-    not HAS_PYPROJ, reason="pyproj not installed (dev-only cross-check, D-0.3)"
+    not HAS_PYPROJ, reason="pyproj not installed; this is a dev-only cross-check"
 )
 
 
@@ -225,7 +225,7 @@ def test_direct_geodesic_matches_pyproj() -> None:
 def test_projection_is_not_proj_sinusoidal_on_the_sphere() -> None:
     """The ellipsoidal ordinate departs from the spherical one by km.
 
-    Pins the justification of ``D-0.3``: PROJ's ``+proj=sinu`` on a sphere
+    Pins why PROJ is not a runtime dependency: its ``+proj=sinu`` on a sphere
     is not the parallels-plane projection of the paper.
     """
     spherical = pyproj.Transformer.from_crs(
@@ -320,7 +320,7 @@ def test_projection_signs_follow_the_hemisphere() -> None:
 
 
 def test_longitude_is_not_range_checked() -> None:
-    """F4 owns the domain; the geodesy layer only needs finiteness (D-1.5)."""
+    """The boundary layer owns the domain; geodesy only needs finiteness."""
     x, _ = geodesy.geodetic_to_sinusoidal(-179.4, 71.2333)
     assert x < 0.0
 
@@ -379,7 +379,7 @@ def test_quadrature_raises_when_interval_cap_is_too_low() -> None:
 
 
 def test_coincident_points_return_zero_distance_and_azimuth() -> None:
-    """A duplicated vertex is data, not an error (D-1.6)."""
+    """A duplicated vertex is data, not an error."""
     lon, lat = REFERENCE_POINTS["central_park"]
     assert geodesy.inverse_geodesic(lon, lat, lon, lat) == (0.0, 0.0)
 
@@ -578,7 +578,7 @@ def test_port_reproduces_origin_geodesic_to_the_last_bits() -> None:
 
 
 def test_argument_order_is_lon_lat_not_lat_lon() -> None:
-    """Pins ``D-1.2`` against the (lat, lon) order of itacart_core.
+    """Pins the (lon, lat) argument order against itacart_core's (lat, lon).
 
     ``itacart_core.geodesy.forward`` takes ``(lat, lon)``; every public
     function here takes ``(lon, lat)``. Swapping them produces a valid
@@ -625,7 +625,7 @@ def test_roundtrip_error_fits_the_epsilon_budget_of_cell_quantisation() -> None:
 
 
 def test_polar_row_beyond_the_quadrant_raises_instead_of_returning_a_latitude() -> None:
-    """Regression for ``B-1.2``.
+    """Regression guard.
 
     Resolution-1 row 1000 is the clipped polar row: the quadrant is
     1000.196 cells tall, so refinements inside that row can address an

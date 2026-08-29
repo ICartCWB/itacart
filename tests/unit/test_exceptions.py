@@ -94,7 +94,9 @@ def test_non_existent_cell_is_a_domain_error() -> None:
 
 
 def test_invalid_refinement_code_is_an_index_error() -> None:
-    """B-0.1 surfaces as a syntax error, caught by ``except InvalidIndexError``."""
+    """The alphabet inversion surfaces as a syntax error, caught by
+    ``except InvalidIndexError``.
+    """
     with pytest.raises(exc.InvalidIndexError):
         raise exc.InvalidRefinementCodeError("C2 at an even resolution")
 

@@ -20,7 +20,12 @@ import pytest
 from itacart import boundary
 from itacart import hierarchy as hy
 from itacart import index as ix
-from itacart.constants import MAX_RESOLUTION, QUADRANTS, refinement_alphabet
+from itacart.constants import (
+    MAX_RESOLUTION,
+    MERIDIAN_QUADRANT,
+    QUADRANTS,
+    refinement_alphabet,
+)
 from itacart.exceptions import (
     DomainError,
     GeometryError,
@@ -29,7 +34,12 @@ from itacart.exceptions import (
     NonExistentCellError,
     ResolutionError,
 )
-from itacart.resolutions import cell_size, get_resolution, refinement_ratio
+from itacart.resolutions import (
+    cell_size,
+    get_resolution,
+    linear_refinement_ratio,
+    refinement_ratio,
+)
 
 # --------------------------------------------------------------------------
 # Corpus
@@ -83,6 +93,30 @@ INTERIOR_AT_RES_2_NEAR_BORDER = "NE(2003/0000(1))"
 #: :class:`TestPolarRefinement`; the general border enumeration below
 #: stops short of it so that the two families stay distinguishable.
 POLAR_ROW = 1000
+
+
+#: Ordinate of the pole on the projection plane, the quarter meridian.
+POLE_ORDINATE = MERIDIAN_QUADRANT
+
+
+def _offset_of(code: str, level: int) -> int:
+    """Signed distance of a refinement code from the prime meridian.
+
+    Zero on the line, positive east, negative west. Read from the code's
+    grid position rather than spelled by hand, so the fixture cannot
+    encode the fold it is used to check.
+    """
+    size = linear_refinement_ratio(level)
+    return boundary.meridian_child(*boundary.child_position(code, level), size)[1]
+
+
+def _sub_row_span(parent: str, code: str, level: int) -> tuple[float, float]:
+    """Ordinates a refinement code occupies inside its parent, unclipped."""
+    size = linear_refinement_ratio(level)
+    sub = boundary.meridian_geometry(parent)[3] / size
+    sub_row = boundary.meridian_child(*boundary.child_position(code, level), size)[0]
+    base = abs(boundary.meridian_geometry(parent)[2]) + sub_row * sub
+    return base, base + sub
 
 
 def _last_column_cell(quadrant: str, row: int) -> str | None:
@@ -840,6 +874,56 @@ class TestPolarRefinement:
                 )
                 assert unary_union(pieces).area == pytest.approx(body.area, rel=1e-6)
                 queue = found
+
+    def test_the_whole_level_alphabet_is_accounted_for(self) -> None:
+        """Every nominal code lands in exactly one of four buckets.
+
+        Alive under the parent's own prefix, killed by lying wholly
+        beyond the pole, killed by the collapse of the sub-row that holds
+        the pole, or gained from the stem of the column immediately east.
+        The four have to sum to the refinement ratio, and the first plus
+        the fourth have to sum to what descent returns. Stated over the
+        whole alphabet at both refinements, since a bucket that is empty
+        is as much a result as one that is full.
+        """
+        for cell in self.POLAR:
+            queue = [cell]
+            for level in (2, 3):
+                for parent in queue:
+                    ratio = refinement_ratio(level)
+                    produced = set(hy._children_of(parent))
+                    east = hy._shift_column(parent, 1)
+                    own_alive, beyond, collapsed, gained = [], [], [], []
+                    for code in refinement_alphabet(level):
+                        base, top = _sub_row_span(parent, code, level)
+                        offset = _offset_of(code, level)
+                        if base >= POLE_ORDINATE:
+                            beyond.append(code)
+                        elif top > POLE_ORDINATE and offset != 0:
+                            collapsed.append(code)
+                        else:
+                            own_alive.append(code)
+                        if _child(east, code) in produced:
+                            gained.append(code)
+                    assert len(own_alive) + len(beyond) + len(collapsed) == ratio
+                    assert gained == []
+                    assert produced == {_child(parent, code) for code in own_alive}
+                    assert len(produced) == len(own_alive)
+                queue = [child for parent in queue for child in hy._children_of(parent)]
+
+    def test_the_eastern_stem_gains_nothing_here_alone(self) -> None:
+        """The polar cell absorbs, yet its eastern stem is empty.
+
+        Everywhere else in the border family the eastern stem is what
+        keeps descent from losing children. Here there is no column east
+        to descend into: the polar cell already spans the whole parallel,
+        so column zero is the last one the row holds.
+        """
+        for cell in self.POLAR:
+            assert boundary.absorbs_border(cell)
+            quadrant = cell[:2]
+            assert boundary.last_lattice_column(quadrant, POLAR_ROW, L1) == 0
+            assert boundary.is_valid_cell(f"{quadrant}(0001/{POLAR_ROW:04d})") is False
 
     def test_the_lone_child_compacts_back_onto_its_parent(self) -> None:
         """Two indices, one region, and the spatial operations agree.
