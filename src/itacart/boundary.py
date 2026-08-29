@@ -334,7 +334,7 @@ def _clip_half_plane(
 
 
 # --------------------------------------------------------------------------
-# The triangle fold (Figura 4)
+# The triangle fold (Figure 4)
 # --------------------------------------------------------------------------
 
 
@@ -511,11 +511,14 @@ def _trapezoid_bases(
     base of that ordinate lies inside the domain at all.
 
     With ``b`` the border abscissa, ``x`` the anchor and ``s`` the side,
-    these are ``b(y0) - x`` and ``b(y1) - (x - s)``. The lean of the cell
-    carries the upper side one whole ``s`` towards the meridian while the
-    border retreats by much less, so the upper base is the one that
-    extends and the lower is the one that shrinks. Exactly one of them
-    exceeds ``s``.
+    these are ``b(y0) - x`` and ``b(y1) - (x - s)``. Which of the two
+    extends depends on how fast the border retreats with height. Over
+    most of the globe it retreats by less than one side per side, so the
+    lean carries the upper side towards the meridian faster than the
+    border leaves it and the upper base is the one that extends. The
+    polar row reverses that: there the border retreats by pi sides per
+    side, the lower base is the one that extends, and the upper base is
+    what is left of a cell that the antemeridian has nearly closed.
     """
     ordinates = [y for _, y in ring]
     bases: list[float] = []
@@ -672,6 +675,19 @@ def _ring_state(cell: str) -> tuple[CellShape, list[tuple[float, float]], bool]:
     working = list(ring)
     row = int(math.floor(min(ordinates) / _L1 + _CLIP_EPSILON_M))
 
+    if min(ordinates) >= MERIDIAN_QUADRANT - _CLIP_EPSILON_M:
+        # Wholly beyond the pole. Every sub-row of the polar row above the
+        # one holding the pole lands here, and none of them names surface.
+        return shape, [], False
+
+    if max(ordinates) > MERIDIAN_QUADRANT and shape == "parallelogram":
+        # The sub-row that holds the pole collapses onto a single
+        # isosceles triangle spanning the whole parallel, so the off-
+        # meridian codes of that sub-row name no cell of their own. Only
+        # the code on the meridian survives, and it is the triangle
+        # branch below.
+        return shape, [], False
+
     if max(ordinates) > MERIDIAN_QUADRANT:
         y_sign = -1.0 if quadrant[0] == "S" else 1.0
         cap = y_sign * MERIDIAN_QUADRANT
@@ -688,9 +704,11 @@ def _ring_state(cell: str) -> tuple[CellShape, list[tuple[float, float]], bool]:
     absorbed = _absorb_border(working, quadrant, row)
     if absorbed is None:
         return shape, working, False
-    if column == 0:
+    if column == 0 and shape == "triangle":
         # The meridian triangle keeps its name even when the border has
         # come nearer than one side and collapsed its apex onto the pole.
+        # A parallelogram of the same column has no such exemption: it
+        # gains a longer base like any other absorbing cell.
         return shape, absorbed, True
     return "trapezoid", absorbed, True
 

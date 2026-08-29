@@ -78,9 +78,10 @@ BORDER_AT_RES_2 = "NE(2003/0000(2))"
 #: sits close enough to it that the eastern stem still offers candidates.
 INTERIOR_AT_RES_2_NEAR_BORDER = "NE(2003/0000(1))"
 
-#: The polar row, whose refinement rings are malformed upstream. Excluded
-#: from the border enumeration and pinned separately by
-#: :class:`TestPolarRefinementDefect`.
+#: The polar row, the one row shorter than a whole lattice side. Its
+#: refinement follows a rule of its own and is pinned separately by
+#: :class:`TestPolarRefinement`; the general border enumeration below
+#: stops short of it so that the two families stay distinguishable.
 POLAR_ROW = 1000
 
 
@@ -94,10 +95,14 @@ def _last_column_cell(quadrant: str, row: int) -> str | None:
 
 
 def _every_row_last_cell(quadrant: str = "NE") -> Iterator[str]:
-    """Every last-column cell of a quadrant, one per row.
+    """Every last-column cell of a quadrant below the polar row, one per row.
 
-    This is the whole border family at resolution 1, enumerated rather
-    than sampled.
+    The antemeridian border family at resolution 1, enumerated rather
+    than sampled. The polar row is deliberately not part of it: its cells
+    are cut short by the pole rather than by the antemeridian, so they
+    obey a different rule and would blunt every property stated over this
+    family. They are enumerated on their own in
+    :class:`TestPolarRefinement`.
     """
     for row in range(0, POLAR_ROW):
         cell = _last_column_cell(quadrant, row)
@@ -263,9 +268,17 @@ class TestGetChildrenOnTheBorder:
             assert len(hy._children_of(cell)) == count
 
     def test_the_count_stays_between_two_and_six_over_the_family(self) -> None:
+        """Bounds the antemeridian family, which is not the whole globe.
+
+        The polar cell sits outside these bounds with a single child, and
+        outside this family: it is cut short by the pole rather than by
+        the antemeridian. Widening the floor to admit it would make the
+        bound say nothing about either family.
+        """
         counts = {len(hy._children_of(parent)) for parent in _every_row_last_cell("NE")}
         assert min(counts) >= 2
         assert max(counts) <= 6
+        assert len(hy._children_of("NE(0000/1000)")) < min(counts)
 
     def test_descending_only_the_own_stem_would_lose_children(self) -> None:
         stem = EQUATOR_TRAPEZOID[:-1]
@@ -746,19 +759,20 @@ class TestRenderAndDescend:
 # --------------------------------------------------------------------------
 
 
-class TestPolarRefinementDefect:
-    """The polar triangle refines into rings that cross themselves.
+class TestPolarRefinement:
+    """The polar row refines by vertical span, not by the level alphabet.
 
-    Two cells in the whole globe are affected, one per eastern quadrant;
-    the western quadrants have no polar cell because column zero does not
-    exist there. Descent refuses them loudly instead of repairing the
-    ring, because a repaired ring answers with a child set derived from a
-    polygon nobody meant to draw.
+    Row 1000 stands a whole side above the equator while the pole is only
+    about two kilometres higher, so every refinement of it is cut from a
+    lattice that overshoots. A sub-row wholly beyond the pole names no
+    cell; the sub-row holding the pole collapses onto one isosceles
+    triangle spanning the parallel; sub-rows below it refine normally.
+    The child count therefore falls far below the refinement ratio, and
+    that shortfall is the result rather than a defect.
 
-    These tests assert the defect so that it cannot be fixed silently:
-    when the ring construction is corrected they fail, which is the
-    signal to delete them and fold the polar row back into the border
-    enumeration above.
+    Two cells in the globe are affected, one per eastern quadrant. The
+    western quadrants have no polar cell because column zero does not
+    exist there.
     """
 
     POLAR = ("NE(0000/1000)", "SE(0000/1000)")
@@ -774,39 +788,111 @@ class TestPolarRefinementDefect:
             assert boundary.cell_shape(cell) == "triangle"
             assert boundary.absorbs_border(cell)
 
-    def test_descent_refuses_the_polar_cell_rather_than_guessing(self) -> None:
+    def test_descent_enumerates_the_polar_cell_instead_of_refusing_it(self) -> None:
         for cell in self.POLAR:
-            with pytest.raises(GeometryError):
-                hy._children_of(cell)
+            assert hy._children_of(cell)
 
-    def test_the_first_child_wrongly_covers_the_whole_parent(self) -> None:
-        """The measured symptom, recorded so the report has a number."""
+    def test_the_first_refinement_yields_a_single_child(self) -> None:
+        """Refining once buys no detail: the child is the parent again.
+
+        The only sub-row at this level is the one holding the pole, and
+        it collapses onto the triangle the parent already was.
+        """
         from shapely.geometry import Polygon
 
         for cell in self.POLAR:
-            parent_area = Polygon(boundary.plane_ring(cell)[1]).area
-            first = _child(cell, refinement_alphabet(2)[0])
-            child_area = Polygon(boundary.plane_ring(first)[1]).area
-            assert child_area == pytest.approx(parent_area, rel=1e-12)
+            found = hy._children_of(cell)
+            assert len(found) == 1
+            assert found[0] == _child(cell, refinement_alphabet(2)[0])
+            assert Polygon(boundary.plane_ring(found[0])[1]).equals(
+                Polygon(boundary.plane_ring(cell)[1])
+            )
 
-    def test_two_of_the_four_refinement_rings_are_self_intersecting(self) -> None:
+    def test_the_second_refinement_yields_ten_of_twenty_five(self) -> None:
+        """Nine cells across the lower sub-row and one on the pole.
+
+        The whole alphabet is enumerated and the survivors named, so the
+        shortfall against the refinement ratio is a census.
+        """
+        alphabet = refinement_alphabet(3)
+        expected = [
+            alphabet[position] for position in (0, 1, 2, 3, 4, 5, 6, 10, 15, 20)
+        ]
+        for cell in self.POLAR:
+            parent = hy._children_of(cell)[0]
+            found = hy._children_of(parent)
+            assert len(found) < refinement_ratio(3)
+            assert sorted(found) == sorted(_child(parent, code) for code in expected)
+
+    def test_the_children_tile_the_parent_without_gap_or_overlap(self) -> None:
+        """Area closes at both refinements, which is what a partition means."""
+        from shapely.geometry import Polygon
+        from shapely.ops import unary_union
+
+        for cell in self.POLAR:
+            body = Polygon(boundary.plane_ring(cell)[1])
+            queue = [cell]
+            for _ in (2, 3):
+                found = [child for parent in queue for child in hy._children_of(parent)]
+                pieces = [Polygon(boundary.plane_ring(child)[1]) for child in found]
+                assert sum(piece.area for piece in pieces) == pytest.approx(
+                    body.area, rel=1e-6
+                )
+                assert unary_union(pieces).area == pytest.approx(body.area, rel=1e-6)
+                queue = found
+
+    def test_the_lone_child_compacts_back_onto_its_parent(self) -> None:
+        """Two indices, one region, and the spatial operations agree.
+
+        The single child of the polar cell covers exactly what its parent
+        covers, which is the only place in the globe where refining buys
+        no area. Compaction is spatial and has to collapse the pair;
+        containment is an index predicate and happens to answer the same
+        way here, which is worth pinning because it does so for a
+        different reason.
+        """
         from shapely.geometry import Polygon
 
         for cell in self.POLAR:
-            invalid = 0
-            for code in refinement_alphabet(2):
-                candidate = _child(cell, code)
-                if not boundary.is_valid_cell(candidate):
-                    continue
-                if not Polygon(boundary.plane_ring(candidate)[1]).is_valid:
-                    invalid += 1
-            assert invalid == 2
+            lone = hy._children_of(cell)[0]
+            assert Polygon(boundary.plane_ring(lone)[1]).equals(
+                Polygon(boundary.plane_ring(cell)[1])
+            )
+            assert hy.compact_cells(lone) == cell
+            assert ix.normalize(f"{cell},{lone}") == cell
+            assert hy.contains(cell, lone) is True
+            assert hy.is_ancestor(cell, lone) is True
+            assert hy.get_parent(lone) == cell
+            assert list(hy.uncompact_cells(cell, 2)) == [lone]
 
     def test_no_other_row_of_any_quadrant_is_affected(self) -> None:
-        """Bounds the defect: enumerated over every last column of the globe."""
+        """Bounds the rule: enumerated over every last column of the globe."""
         for quadrant in QUADRANTS:
             for cell in _every_row_last_cell(quadrant):
                 hy._children_of(cell)
+
+    def test_a_malformed_ring_is_still_refused_rather_than_repaired(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The guard survives the polar row that used to trip it.
+
+        No cell produces a self-intersecting ring any more, so the only
+        way to reach the refusal is to hand the selector one. Repairing
+        such a ring would answer with a child set derived from a polygon
+        nobody meant to draw, and the caller would have no way to tell.
+        """
+        bowtie = [(0.0, 0.0), (1.0, 1.0), (1.0, 0.0), (0.0, 1.0)]
+        genuine = boundary.plane_ring
+
+        def malformed(cell: str) -> tuple[str, list[tuple[float, float]]]:
+            if cell == EQUATOR_TRAPEZOID:
+                return genuine(cell)
+            return "parallelogram", bowtie
+
+        monkeypatch.setattr(boundary, "plane_ring", malformed)
+        monkeypatch.setattr(boundary, "is_valid_cell", lambda cell: True)
+        with pytest.raises(GeometryError):
+            hy._border_children_of(EQUATOR_TRAPEZOID, 2)
 
 
 # --------------------------------------------------------------------------

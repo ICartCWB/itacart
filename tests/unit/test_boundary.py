@@ -1351,3 +1351,228 @@ def test_the_polar_row_is_clipped_rather_than_deleted() -> None:
     assert boundary.is_equal_area_cell(cell) is False
     assert effective_cell_area(cell) < nominal_cell_area(1)
     assert max(abs(y) for _, y in boundary.plane_ring(cell)[1]) <= MERIDIAN_QUADRANT
+
+
+# --------------------------------------------------------------------------
+# The polar row
+# --------------------------------------------------------------------------
+
+
+class TestPolarRowGeometry:
+    """The one row whose height falls short of a whole lattice side.
+
+    Row 1000 has its base a full side above the equator but the pole
+    stands only about two kilometres higher, so the row is roughly a
+    fifth of a row tall. Every child of it is therefore built from a
+    lattice that overshoots the pole, and the rule the paper's model
+    implies is a rule about vertical span rather than about shape names:
+    a cell whose nominal span holds the pole collapses onto a single
+    isosceles triangle covering the whole parallel, a cell wholly beyond
+    the pole names no surface, and a cell wholly below it refines in the
+    ordinary way.
+
+    Two cells in the globe are affected, one per eastern quadrant. The
+    western quadrants have no polar cell because column zero does not
+    exist there.
+    """
+
+    POLAR = ("NE(0000/1000)", "SE(0000/1000)")
+
+    #: How far the closed form below may sit from the ellipsoidal
+    #: value. It is a model, not the implementation restated: near the
+    #: pole the parallel radius is the meridian arc to within the
+    #: flattening, and the residual is a few parts in a hundred million.
+    MODEL_TOLERANCE = 1e-7
+
+    @staticmethod
+    def half_parallel(ordinate: float) -> float:
+        """Half-width of the parallel at an ordinate, out to 180 degrees.
+
+        Closed form, so the assertions do not restate a measurement.
+        """
+        return math.pi * (MERIDIAN_QUADRANT - ordinate)
+
+    def test_the_polar_row_is_shorter_than_one_lattice_side(self) -> None:
+        height = MERIDIAN_QUADRANT - 1000 * L1
+        assert 0.0 < height < L1
+        assert height / L1 == pytest.approx(0.1966, abs=1e-4)
+
+    def test_the_polar_cell_is_an_isosceles_triangle_on_the_pole(self) -> None:
+        for cell in self.POLAR:
+            shape, ring = boundary.plane_ring(cell)
+            assert shape == "triangle"
+            assert boundary.absorbs_border(cell) is True
+            assert len(ring) == 3
+            apex = max(ring, key=lambda vertex: abs(vertex[1]))
+            base = [vertex for vertex in ring if vertex is not apex]
+            assert apex[0] == pytest.approx(0.0, abs=1e-6)
+            assert abs(apex[1]) == pytest.approx(MERIDIAN_QUADRANT)
+            assert base[0][1] == base[1][1]
+            assert base[0][0] == pytest.approx(-base[1][0])
+
+    def test_the_polar_base_spans_the_whole_parallel(self) -> None:
+        """The base reaches 180 degrees both ways, not one quadrant.
+
+        This is why only two polar cells exist rather than four: the cell
+        of an eastern quadrant already covers the entire cap.
+        """
+        for cell in self.POLAR:
+            ring = boundary.plane_ring(cell)[1]
+            ordinate = min(abs(vertex[1]) for vertex in ring)
+            reach = max(abs(vertex[0]) for vertex in ring)
+            assert reach == pytest.approx(
+                self.half_parallel(ordinate), rel=self.MODEL_TOLERANCE
+            )
+
+    def test_the_first_refinement_leaves_the_polar_cell_unchanged(self) -> None:
+        """One child, and it is the parent again.
+
+        The sub-row holding the pole collapses, and at this level there
+        is only one such sub-row, so refining the polar cell once buys
+        no detail at all.
+        """
+        for cell in self.POLAR:
+            surviving = [
+                child for child in children(cell, 2) if boundary.plane_ring(child)[1]
+            ]
+            assert len(surviving) == 1
+            assert Polygon(boundary.plane_ring(surviving[0])[1]).equals(
+                Polygon(boundary.plane_ring(cell)[1])
+            )
+
+    def test_the_second_refinement_holds_four_shape_classes(self) -> None:
+        """The only sibling set in the globe carrying all four shapes.
+
+        Enumerated over both polar cells and over the whole level
+        alphabet, so the classification is a census and not a sample.
+        """
+        for cell in self.POLAR:
+            parent = children(cell, 2)[0]
+            census: dict[str, list[str]] = {}
+            for child in children(parent, 3):
+                shape, ring = boundary.plane_ring(child)
+                if not ring:
+                    continue
+                census.setdefault(shape, []).append(child)
+            assert sorted(census) == ["parallelogram", "trapezoid", "triangle"]
+            assert len(census["parallelogram"]) == 6
+            assert len(census["trapezoid"]) == 2
+            assert len(census["triangle"]) == 2
+            equal_area = [
+                child
+                for child in census["parallelogram"] + census["triangle"]
+                if boundary.is_equal_area_cell(child)
+            ]
+            assert len(equal_area) == 7
+
+    def test_the_two_absorbing_children_carry_the_short_base_above(self) -> None:
+        """The upper base shrinks here, against the usual boundary case.
+
+        Away from the pole the lean carries a cell's upper side one whole
+        side toward the meridian while the border retreats by less, so
+        the upper base is the one that extends. The polar border retreats
+        by pi sides per side, which reverses it.
+        """
+        for cell in self.POLAR:
+            parent = children(cell, 2)[0]
+            side = cell_size(2) / 5
+            for child in children(parent, 3):
+                shape, ring = boundary.plane_ring(child)
+                if shape != "trapezoid":
+                    continue
+                lower_y = min(abs(vertex[1]) for vertex in ring)
+                upper_y = max(abs(vertex[1]) for vertex in ring)
+                lower = [abs(v[0]) for v in ring if abs(v[1]) == lower_y]
+                upper = [abs(v[0]) for v in ring if abs(v[1]) == upper_y]
+                lower_base = max(lower) - min(lower)
+                upper_base = max(upper) - min(upper)
+                assert upper_base < side < lower_base
+                assert max(lower) == pytest.approx(
+                    self.half_parallel(lower_y), rel=self.MODEL_TOLERANCE
+                )
+                assert max(upper) == pytest.approx(
+                    self.half_parallel(upper_y), rel=self.MODEL_TOLERANCE
+                )
+                assert Polygon(ring).area == pytest.approx(
+                    (lower_base + upper_base) / 2.0 * side, rel=1e-9
+                )
+
+    def test_the_collapsed_sub_row_keeps_only_its_meridian_code(self) -> None:
+        """Off-meridian codes of the sub-row holding the pole name nothing.
+
+        They are the codes whose rings used to come out self-intersecting.
+        The cell they would have named is already inside the isosceles
+        triangle that the sub-row collapsed onto.
+        """
+        for cell in self.POLAR:
+            parent = children(cell, 2)[0]
+            named = [
+                child for child in children(parent, 3) if boundary.plane_ring(child)[1]
+            ]
+            polar = [
+                child
+                for child in named
+                if boundary.cell_shape(child) == "triangle"
+                and boundary.absorbs_border(child)
+            ]
+            assert len(polar) == 1
+            ring = boundary.plane_ring(polar[0])[1]
+            ordinate = min(abs(vertex[1]) for vertex in ring)
+            assert max(abs(v[0]) for v in ring) == pytest.approx(
+                self.half_parallel(ordinate), rel=self.MODEL_TOLERANCE
+            )
+
+    def test_sub_rows_beyond_the_pole_name_no_cell(self) -> None:
+        for cell in self.POLAR:
+            parent = children(cell, 2)[0]
+            side = cell_size(2) / 5
+            beyond = 0
+            for child in children(parent, 3):
+                base = abs(boundary.meridian_geometry(child)[2])
+                if base >= MERIDIAN_QUADRANT:
+                    beyond += 1
+                    assert boundary.plane_ring(child)[1] == [], child
+            assert beyond == 9
+            assert side == pytest.approx(1000.0)
+
+    def test_every_ring_under_the_polar_cell_is_simple(self) -> None:
+        """No self-intersection anywhere in the first two refinements.
+
+        The whole subtree, enumerated. A malformed ring is the failure
+        this section exists to keep out.
+        """
+        for cell in self.POLAR:
+            queue = [cell]
+            checked = 0
+            for level in (2, 3):
+                nxt: list[str] = []
+                for parent in queue:
+                    for child in children(parent, level):
+                        ring = boundary.plane_ring(child)[1]
+                        if not ring:
+                            continue
+                        assert Polygon(ring).is_valid, child
+                        checked += 1
+                        nxt.append(child)
+                queue = nxt
+            assert checked == 11
+
+    def test_the_last_full_column_clears_the_antemeridian_by_metres(self) -> None:
+        """How near the pole ordinate the child census runs.
+
+        The last child that keeps its nominal area does so because its
+        upper side stops short of 180 degrees by tens of metres. Lower
+        the pole by about eleven metres and that child would absorb too,
+        and the census of the sub-row would change. The constant is worth
+        the precision it carries.
+        """
+        side = cell_size(2) / 5
+        upper_y = 1000 * L1 + side
+        last_full_upper_reach = 3.0 * side
+        clearance = self.half_parallel(upper_y) - last_full_upper_reach
+        assert 0.0 < clearance < side
+        assert clearance == pytest.approx(33.928, abs=1e-3)
+        ordinate_margin = MERIDIAN_QUADRANT - (
+            upper_y + last_full_upper_reach / math.pi
+        )
+        assert ordinate_margin == pytest.approx(10.800, abs=1e-3)
