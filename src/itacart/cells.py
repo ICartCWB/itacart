@@ -3,7 +3,8 @@
 Satisfies OGC DGGS Core requirements 11 (simple cell geometry), 12 (direct
 position) and 16 (quantization).
 
-Origem: itacart_core/cells.py + sinusoidal_coordinates_to_dggs do notebook.
+Provenance: ``itacart_core/cells.py``, plus the notebook's
+``sinusoidal_coordinates_to_dggs``.
 
 The shear
 ---------

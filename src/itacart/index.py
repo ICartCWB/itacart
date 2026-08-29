@@ -15,7 +15,8 @@ only against the canonical form produced by :func:`normalize`, since the
 same region admits several spellings (``4(1,2,3,4)`` and ``4`` denote the
 same space).
 
-Origem: itacart_core/compositional_index.py + parser do notebook DGGS_Tree.
+Provenance: ``itacart_core/compositional_index.py``, plus the parser from
+the DGGS_Tree notebook.
 
 Grammar accepted by :func:`parse` (``D-2.2`` widens the first production to
 a list, so that :func:`compose` over cells of several quadrants produces a
@@ -604,7 +605,8 @@ def normalize(index: str) -> str:
     This is what makes OGC requirement 13 hold in practice: two indices
     denote the same region if and only if their canonical forms are equal.
 
-    Origem: analogo ASCII de binary_index.recompose_to_prefix_form.
+    Provenance: the ASCII analogue of
+    ``binary_index.recompose_to_prefix_form``.
 
     Args:
         index: Compositional index string.

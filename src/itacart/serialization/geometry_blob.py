@@ -29,8 +29,8 @@ shares with its predecessor; vertex 0 is always written in full.
 Measured density on real cadastral datasets ranges from 27 to 38
 bits/vertex, rising with geographic extent as shared prefixes shorten.
 
-Origem: itacart_core/geometry_blob.py (F2.2 v2),
-spec em docs/geometry_encoding_spec.md.
+Provenance: ``itacart_core/geometry_blob.py``; the format is specified in
+``docs/geometry_encoding_spec.md``.
 """
 
 from __future__ import annotations

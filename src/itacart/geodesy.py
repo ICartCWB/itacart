@@ -6,8 +6,8 @@ section 2.3, equations (1) and (2)::
     x = f1(lambda, phi) = lambda * a cos(phi) / sqrt(1 - e^2 sin^2 phi)   (1)
     y = f2(phi)         = int_0^phi a(1 - e^2) / (1 - e^2 sin^2 P)^{3/2} dP   (2)
 
-Origem: itacart_core/geodesy.py (F1 e F1+ do itacart-app). Portado, nao
-reescrito; ver o handoff da fase para as divergencias declaradas.
+Provenance: ``itacart_core/geodesy.py``, from the itacart-app work. Ported
+rather than rewritten.
 
 Read structurally, the two equations say something simple. The factor in
 Eq. (1) is ``N(phi) cos phi``, the radius of the parallel circle, so ``x``

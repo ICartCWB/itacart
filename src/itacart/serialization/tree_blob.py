@@ -12,7 +12,8 @@ idempotent recomposition, bit-exact round trip, content-addressability,
 The encoding depends only on the index being prefix-structured with a
 known per-level alphabet, so it ports to other DGGS with little change.
 
-Origem: itacart_core/binary_index.py (F2.1), spec em docs/binary_encoding_spec.md.
+Provenance: ``itacart_core/binary_index.py``; the format is specified in
+``docs/binary_encoding_spec.md``.
 """
 
 from __future__ import annotations

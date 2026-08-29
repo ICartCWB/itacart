@@ -3,16 +3,16 @@
 All values transcribed from Silva, Dietzsch & Shiguemori (2025),
 *Revista Brasileira de Cartografia*, v. 77. DOI: 10.14393/rbcv77n0a-79281
 
-Origem: itacart_core/resolutions.py + Tabela 1 do artigo.
+Provenance: ``itacart_core/resolutions.py`` and Table 1 of the paper.
 
 The module holds data, not behaviour. The single exception is
 :func:`refinement_alphabet`, a lookup over ``REFINEMENT_ALPHABET`` that
 exists so the even/odd predicate is written once in the whole package
 (see the ``B-0.1`` warning on :data:`QUINARY_CODES`).
 
-Nota de leitura: os comentarios de secao seguem a numeracao do artigo.
-Toda constante carrega a referencia da figura, tabela ou equacao de
-origem, para que a conferencia contra o PDF seja mecanica.
+Reading note: the section comments follow the paper's own numbering, and
+every constant carries the figure, table or equation it is taken from, so
+that checking this module against the PDF is a mechanical exercise.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from typing import Final, Literal, NamedTuple
 from .exceptions import ResolutionError
 
 # --------------------------------------------------------------------------
-# WGS84 ellipsoid (artigo, secao 3)
+# WGS84 ellipsoid (paper, section 3)
 # --------------------------------------------------------------------------
 # Defining parameters are ``a`` and ``1/f``; everything else is derived at
 # import time (decision D-0.9). tests/unit/test_constants.py audits each
@@ -89,7 +89,7 @@ ANTEMERIDIAN_LON: Final[float] = 180.0
 """Longitude of the antemeridian, in degrees. Boundary of the trapezoidal cells."""
 
 # --------------------------------------------------------------------------
-# Resolutions (artigo, Tabela 1)
+# Resolutions (paper, Table 1)
 # --------------------------------------------------------------------------
 
 MIN_RESOLUTION: Final[int] = 0
@@ -143,7 +143,7 @@ CELL_AREA_M2: Final[tuple[float | None, ...]] = (
 """Nominal cell area, in square metres, indexed by resolution.
 
 Nominal, not effective: trapezoidal cells at the antemeridian depart from
-this value by design (artigo, secao 3.2 e Quadro 5, Req 21).
+this value by design (paper, section 3.2 and Frame 5, Req 21).
 """
 
 VISUALIZATION_SCALE: Final[tuple[int | None, ...]] = (
@@ -196,7 +196,7 @@ Resolution 1 and every odd resolution have sides of 10^4, 10^3, 10^2,
 10^1, 10^0, 10^-1 and 10^-2 metres, so their areas are exact powers of
 ten in square metres. These are the levels where one token maps onto a
 whole standard metric unit of area, which is the "decimal convergence"
-design criterion (artigo, Quadro 1 e Quadro 3, Blockchain Integration).
+design criterion (paper, Frame 1 and Frame 3, Blockchain Integration).
 
 Even resolutions carry sides of the form 5 x 10^k and areas of the form
 25 x 10^k, which are regular but not decimal units.
@@ -220,8 +220,8 @@ RES1_CELLS_X: Final[int] = 2003
 
 ``EQUATOR_QUADRANT / 10 km = 2003.75``, so columns ``0000``..``2002`` are
 full and column ``2003`` is 0.75 wide. This is what reconciles the two
-statements the paper makes: "approximately 2,003 cells" (secao 3.1) counts
-the full ones, while ``RES1_MAX_INDEX`` (Tabela 1) addresses the partial
+statements the paper makes: "approximately 2,003 cells" (section 3.1) counts
+the full ones, while ``RES1_MAX_INDEX`` (Table 1) addresses the partial
 one as well. Source of the antemeridian trapezoids handled in F4.
 """
 
@@ -233,13 +233,13 @@ full and row ``1000`` is 0.20 tall. Same reading as :data:`RES1_CELLS_X`.
 """
 
 RES1_MIN_INDEX: Final[str] = "0000/0000"
-"""Lowest resolution-1 address of a quadrant (artigo, Tabela 1)."""
+"""Lowest resolution-1 address of a quadrant (paper, Table 1)."""
 
 RES1_MAX_INDEX: Final[str] = "2003/1000"
-"""Highest resolution-1 address of a quadrant (artigo, Tabela 1)."""
+"""Highest resolution-1 address of a quadrant (paper, Table 1)."""
 
 # --------------------------------------------------------------------------
-# Refinement alphabets (artigo, secao 3.1 e Figura 3)
+# Refinement alphabets (paper, section 3.1 and Figure 3)
 # --------------------------------------------------------------------------
 
 QUATERNARY_GRID_SIZE: Final[int] = 2
@@ -362,7 +362,7 @@ def refinement_alphabet(resolution: int) -> tuple[str, ...]:
 
 
 # --------------------------------------------------------------------------
-# Index syntax (artigo, secao 3.1)
+# Index syntax (paper, section 3.1)
 # --------------------------------------------------------------------------
 
 DESCENT_OPEN: Final[str] = "("
@@ -375,16 +375,16 @@ QUADRANT_CODE_LENGTH: Final[int] = 2
 """Length of the leading quadrant code: ``NE``, ``NW``, ``SE`` or ``SW``."""
 
 INDEX_EXAMPLE_ATOMIC: Final[str] = "SE(1400/0374(3(C2(3))))"
-"""Canonical single-cell example from the paper (secao 3.1)."""
+"""Canonical single-cell example from the paper (section 3.1)."""
 
 INDEX_EXAMPLE_SIBLINGS: Final[str] = "...4(C1,C2)"
-"""Canonical sibling example from the paper (secao 4): two cells, one index."""
+"""Canonical sibling example from the paper (section 4): two cells, one index."""
 
 # No index component is ever negative: quadrant mirroring absorbs the sign
-# (artigo, secao 3.1).
+# (paper, section 3.1).
 
 # --------------------------------------------------------------------------
-# Antemeridian extension zones (artigo, secao 3.2 e Figura 5)
+# Antemeridian extension zones (paper, section 3.2 and Figure 5)
 # --------------------------------------------------------------------------
 
 ExtensionZone = Literal["FIJI", "CHUKOTKA"]
@@ -441,7 +441,7 @@ the .5 in the Fiji and Chukotka limits.
 """
 
 # --------------------------------------------------------------------------
-# Cell shapes (artigo, secao 3.2 e Figuras 4 e 6)
+# Cell shapes (paper, section 3.2 and Figures 4 and 6)
 # --------------------------------------------------------------------------
 
 CellShape = Literal["parallelogram", "triangle", "trapezoid"]
@@ -453,7 +453,7 @@ PARALLELOGRAM_BASE_ANGLE_DEG: Final[float] = 45.0
 """Acute angle of the cell on the projection plane, before ellipsoidal distortion."""
 
 TRIANGLE_BASE_TO_HEIGHT_RATIO: Final[float] = 2.0
-"""Base-to-height ratio of the isosceles prime-meridian cell (Figura 4a).
+"""Base-to-height ratio of the isosceles prime-meridian cell (Figure 4a).
 
 The cell index sits at the midpoint of the base and the cell is mirrored
 about the meridian, so base = 2 x height keeps its area equal to that of

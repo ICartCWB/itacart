@@ -20,7 +20,7 @@ The two are bridged by :func:`~itacart.serialization.geometry_blob.geometry_to_t
 in one direction only: a GeometryBlob determines a TreeBlob, but the same
 TreeBlob arises from many geometries.
 
-Origem: itacart_core/binary_index.py (F2.1) e geometry_blob.py (F2.2).
+Provenance: ``itacart_core/binary_index.py`` and ``geometry_blob.py``.
 """
 
 from __future__ import annotations

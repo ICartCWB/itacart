@@ -2,7 +2,7 @@
 
 Satisfies OGC DGGS Core requirements 14 and 15 (hierarchical grid sequence).
 
-Origem: itacart_core/resolutions.py + Tabela 1 do artigo.
+Provenance: ``itacart_core/resolutions.py`` and Table 1 of the paper.
 
 Correspondence with the origin, which stores sides as exact integer
 centimetres and derives everything from them:
@@ -456,8 +456,8 @@ def is_tokenizable_resolution(resolution: int) -> bool:
     enumerate the set either way. F0 took that reading as ``D-0.12`` and
     the choice remains F0's to revisit, not this phase's.
 
-    Origem: itacart_core/engine.py (IDGGSEngine),
-    itacart_core/resolutions.py (``_TOKENIZABLE_RESOLUTIONS``).
+    Provenance: ``itacart_core/engine.py`` (``IDGGSEngine``) and
+    ``itacart_core/resolutions.py`` (``_TOKENIZABLE_RESOLUTIONS``).
 
     Args:
         resolution: Resolution level, 1 to 13.

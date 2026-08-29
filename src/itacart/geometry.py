@@ -11,8 +11,9 @@ verbose at fine resolutions.
 kept, as in conventional vector data. Far more compact, and the form the
 binary encodings in :mod:`itacart.serialization` are built on.
 
-Origem: itacart_core/cell_filling.py, densification.py, geometry_blob.py
-(canonicalize_rings) e cadastral_processor/vertex_extractor.py.
+Provenance: ``itacart_core/cell_filling.py``, ``densification.py``,
+``geometry_blob.py`` (``canonicalize_rings``) and
+``cadastral_processor/vertex_extractor.py``.
 """
 
 from __future__ import annotations
@@ -93,7 +94,7 @@ def count_internal_cells(polygon: "Polygon", resolution: int, n_jobs: int = 1) -
     :func:`itacart.resolutions.nominal_cell_area` gives a distortion-free
     area, which is the property the paper builds tokenization on.
 
-    Origem: itacart_core/engine.py (polygon_to_cells_count).
+    Provenance: ``itacart_core/engine.py`` (``polygon_to_cells_count``).
 
     Args:
         polygon: A Shapely polygon in EPSG:4326.
@@ -127,7 +128,7 @@ def vertex_to_cell(
     than distinct corners. Non-consecutive repeats are kept, being a
     genuine self-touching pathology the caller should see.
 
-    Origem: cadastral_processor/vertex_extractor.py (D-F3.1).
+    Provenance: ``cadastral_processor/vertex_extractor.py``.
 
     Args:
         geometry: A Shapely geometry in EPSG:4326.
@@ -178,7 +179,7 @@ def densify_orthodromic(polygon: "Polygon", max_segment_m: float = 1000.0) -> "P
     geodesic on the ellipsoid; without densification a long edge would
     fill the wrong cells in between.
 
-    Origem: itacart_core/densification.py (F1+).
+    Provenance: ``itacart_core/densification.py``.
 
     Args:
         polygon: A Shapely polygon in EPSG:4326.
@@ -204,7 +205,7 @@ def densify_segment(
     The building block of :func:`densify_orthodromic`, exposed for
     callers working segment by segment such as open LINESTRING handling.
 
-    Origem: itacart_core/geometry_blob.py (densify_segment).
+    Provenance: ``itacart_core/geometry_blob.py`` (``densify_segment``).
 
     Args:
         p1: ``(lon, lat)`` of the start point.
@@ -234,7 +235,8 @@ def canonicalize_rings(rings: list[list[str]]) -> list[list[str]]:
     This is what makes a geometry content-addressable, and therefore what
     makes hashing it meaningful.
 
-    Origem: itacart_core/geometry_blob.py (MIN_LEX_CYCLIC_ROTATION, v2).
+    Provenance: ``itacart_core/geometry_blob.py``
+    (``MIN_LEX_CYCLIC_ROTATION``, v2).
 
     Args:
         rings: Rings as lists of atomic index strings, exterior first.

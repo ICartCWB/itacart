@@ -4,7 +4,7 @@ Satisfies OGC DGGS Core requirements 18 and 19 (interoperability
 functions). The paper marks these as met by design; concrete exporters are
 what turn that into a demonstrable claim.
 
-Origem: novo (o notebook fazia isso ad hoc com GeoPandas).
+Provenance: new; the notebook did this ad hoc with GeoPandas.
 """
 
 from __future__ import annotations

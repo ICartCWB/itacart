@@ -1,6 +1,6 @@
 """Exception hierarchy for the itacart package.
 
-Origem: itacart_core/exceptions.py (adaptada).
+Provenance: adapted from ``itacart_core/exceptions.py``.
 
 Every error raised by the package derives from :class:`ITACaRTError`, so a
 caller can guard an entire pipeline with one ``except`` and never catch a

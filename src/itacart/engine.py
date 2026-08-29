@@ -8,8 +8,8 @@ The functional API is complete on its own; this class exists to expose
 ITACaRT as a described, introspectable DGGS to standards-aware consumers
 such as an OGC API-DGGS server.
 
-Origem: itacart_core/engine.py (IDGGSEngine), ampliada para cobrir
-os requisitos declarativos.
+Provenance: ``itacart_core/engine.py`` (``IDGGSEngine``), widened here to
+cover the declarative requirements.
 """
 
 from __future__ import annotations
