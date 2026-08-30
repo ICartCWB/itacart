@@ -7,10 +7,29 @@ Colab prototype, so the suite pins behaviour against published values.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import pytest
 
+import itacart
 from tests.reference_points import REFERENCE_POINTS
+
+# The suite must measure the working tree, never an installed copy that
+# happens to be earlier on sys.path. Without this the whole session can
+# pass green against code that is not the code under edit. docs/source/
+# conf.py refuses the documentation build on the same grounds; the two
+# guards exist so the property holds by construction rather than by
+# remembering to check.
+
+ROOT = Path(__file__).resolve().parents[1]
+_loaded_from = Path(itacart.__file__).resolve().parent
+if _loaded_from != (ROOT / "src" / "itacart").resolve():  # pragma: no cover
+    raise RuntimeError(
+        f"itacart was imported from {_loaded_from}, not from the working tree "
+        f"at {ROOT / 'src' / 'itacart'}. An installed copy is shadowing it; "
+        "uninstall it, reinstall in editable mode, or set PYTHONPATH to "
+        "the working tree's src/."
+    )
 
 # Windows dev environment: a corrupt cert in the store can break aiohttp
 # imports pulled in by optional geo dependencies.

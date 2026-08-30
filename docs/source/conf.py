@@ -153,8 +153,8 @@ html_theme_options = {
 # --------------------------------------------------------------------------
 #
 # The verification notebooks write their figures to docs/_static/fN/, which is
-# outside this source directory: the notebooks themselves are not versioned
-# (P-1.10) but the figures they produce are. The phase_figures extension copies
+# outside this source directory: the notebooks themselves are not versioned but
+# the figures they produce are. The phase_figures extension copies
 # each directory into _generated/ at build time and writes one gallery page per
 # phase, so a new phase's figures need no edit here either.
 

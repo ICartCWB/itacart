@@ -4,12 +4,14 @@ One test per requirement of Frame 4 of the paper. Each asserts the
 behaviour the paper claims, so the compliance table stops being a
 declaration and becomes something CI verifies.
 
-Origem: novo. Mapeia Frame 4 (Core) e Frame 5 (EAERS) do artigo.
+New code. Maps Frame 4 (Core) and Frame 5 (EAERS) of the paper.
 """
 
 from __future__ import annotations
 
 import pytest
+
+import itacart
 
 pytestmark = pytest.mark.conformance
 
@@ -61,10 +63,29 @@ class TestCore:
         """Vector data maps to cell sets via polyfill and vertex_to_cell."""
         raise NotImplementedError
 
-    @pytest.mark.xfail(raises=NotImplementedError, reason="stub")
     def test_req_17_topological_queries(self) -> None:
-        """Parent, child and neighbour resolve from the index alone."""
-        raise NotImplementedError
+        """Parent, child and neighbour resolve from the index alone.
+
+        Completed by F6. The neighbour half is the part that had no prior
+        art: it is checked here by composing a step and its opposite, which
+        can only return to the origin if the arithmetic and the tessellation
+        agree.
+        """
+        cell = "NE(0500/0300)"
+        assert itacart.get_parent(cell) == "NE"
+        assert len(list(itacart.get_children(cell, flatten=True))) == 4
+
+        for outward, back in (("N", "S"), ("E", "W"), ("NE", "SW"), ("NW", "SE")):
+            away = itacart.get_neighbor(cell, outward)
+            assert isinstance(away, str)
+            assert itacart.get_neighbor(away, back) == cell
+
+        assert len(itacart.grid_disk(cell, 1)) == 9
+        assert len(itacart.grid_disk(cell, 1, "manhattan")) == 5
+        assert itacart.are_neighbor_cells(cell, "NE(0499/0301)")
+        assert not itacart.are_neighbor_cells(cell, "NE(0500/0301)")
+        assert itacart.grid_distance(cell, "NE(0505/0303)") == 8
+        assert len(itacart.cell_to_edges(cell)) == 4
 
     @pytest.mark.xfail(raises=NotImplementedError, reason="stub")
     def test_req_18_19_interoperability(self) -> None:
