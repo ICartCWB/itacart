@@ -256,7 +256,7 @@ def _verified_lexical(cell: str, direction: Direction, resolution: int) -> str |
     missing the cell that is really there.
     """
     answer = _lexical_neighbor(cell, direction, resolution)
-    if answer is not None and _crosses_base_cell(cell, answer):
+    if answer is not None and _changes_frame(cell, answer):
         _require_contact(cell, answer, direction)
     return answer
 
@@ -278,9 +278,24 @@ def _lexical_neighbor(cell: str, direction: Direction, resolution: int) -> str |
     return deflect(cell, direction)
 
 
-def _crosses_base_cell(cell: str, answer: str) -> bool:
-    """Whether a step left the resolution-1 cell it started in."""
-    return split_components(cell)[:2] != split_components(answer)[:2]
+def _changes_frame(cell: str, answer: str) -> bool:
+    """Whether a step crossed into another frame rather than moving inside one.
+
+    Only a frame change can make the arithmetic non-invertible, so only a
+    frame change is worth the two rings it costs to check. Every boundary the
+    normalisation handles changes quadrant — the meridian, the equator, the
+    seam, and the overflow into a shorter row, which the seam branch resolves
+    — except the step onto a polar cell, which keeps its quadrant and is
+    therefore named separately.
+
+    Checking instead whether the step left its resolution-1 cell would be
+    true of every step at resolution 1, and would put a geometric test on the
+    path of the interior, which is the path the phase exists to keep lexical.
+    """
+    origin, target = split_components(cell), split_components(answer)
+    if origin[0] != target[0]:
+        return True
+    return int(target[1].partition("/")[2]) == _POLAR_ROW
 
 
 def _require_contact(cell: str, answer: str, direction: Direction) -> None:
@@ -295,9 +310,8 @@ def _require_contact(cell: str, answer: str, direction: Direction) -> None:
     out to touch nothing hands the cell over to measurement — which reports
     the contact even where no lattice step names it.
 
-    Checked only when the base cell changed, which is the only place a frame
-    can have changed. Steps inside one resolution-1 cell are pure arithmetic
-    and pay nothing for this.
+    Checked only when the step changed frame. Steps that stay in one frame
+    are pure arithmetic and pay nothing for this.
     """
     wanted = "edge" if direction in _CARDINALS else "vertex"
     if _contact(_ring(cell), _ring(answer)) != wanted:
@@ -585,12 +599,17 @@ def _geometric_candidates(cell: str) -> list[str]:
     """
     quadrant, _, row = _res1_parts(cell)
     west, _, east, _ = _ring(cell).bounds
-    # Both readings of the cell's longitude span: as written, and as the
-    # mirrored quadrant writes it. An extension cell's ring runs past 180, and
-    # the cells below it on an ordinary row are addressed from the other side
-    # of the seam, at 360 minus that.
-    reach = [abs(west), abs(east), abs(360.0 - abs(west)), abs(360.0 - abs(east))]
-    span = (min(reach), max(reach))
+    # Two readings of the cell's longitude span, kept apart. An extension
+    # cell's ring runs past 180 degrees, and the cells below it on an ordinary
+    # row are addressed from the other side of the seam, at 360 minus that.
+    # Merging the two into one interval would sweep everything between them —
+    # more than twenty degrees of longitude for Chukotka, which is hundreds of
+    # columns of candidates that cannot touch anything.
+    direct = (min(abs(west), abs(east)), max(abs(west), abs(east)))
+    mirrored = (
+        min(abs(360.0 - abs(west)), abs(360.0 - abs(east))),
+        max(abs(360.0 - abs(west)), abs(360.0 - abs(east))),
+    )
     candidates: list[str] = []
     for other in (quadrant, _ACROSS_MERIDIAN[quadrant], _ACROSS_EQUATOR[quadrant]):
         for other_row in (row - 1, row, row + 1):
@@ -601,11 +620,14 @@ def _geometric_candidates(cell: str) -> list[str]:
             columns = {
                 *range(0, min(last, _WINDOW) + 1),
                 *range(max(0, last - _SEAM_REACH), last + 1),
-                *range(
-                    max(0, int(span[0] / step) - _WINDOW),
-                    min(last, int(span[1] / step) + _WINDOW) + 1,
-                ),
             }
+            for low, high in (direct, mirrored):
+                columns |= set(
+                    range(
+                        max(0, int(low / step) - _WINDOW),
+                        min(last, int(high / step) + _WINDOW) + 1,
+                    )
+                )
             for other_column in sorted(columns):
                 candidate = _spell(other, other_column, other_row)
                 if candidate != cell and is_valid_cell(candidate):

@@ -1059,3 +1059,228 @@ def test_a_child_inherits_a_missing_parent_neighbour() -> None:
 def test_classify_answers_none_for_cells_that_do_not_touch() -> None:
     """No shared boundary, so no side of the ring carries it."""
     assert topology._classify(INTERIOR, "NE(0600/0300)", topology._CARDINALS) is None
+
+
+@pytest.mark.slow
+def test_the_candidate_window_is_wider_than_the_zones_need() -> None:
+    """The window constants are sized from measurement, not from argument.
+
+    ``_geometric_candidates`` searches three bands per neighbouring row: around
+    the cell's own column, at the prime meridian, and at the antemeridian seam.
+    The width of the last two is a constant, chosen because it covered the two
+    zones that exist. Nothing made it fail if a future zone reached further
+    past the antemeridian than Chukotka does, and a window that is too narrow
+    loses a neighbour in silence.
+
+    So the sufficiency is measured. Both zones are enumerated at both latitude
+    limits, in all four quadrants, and each cell's neighbour set is compared
+    against the set a window four columns wider would find. Equal sets mean the
+    current width is enough; a wider zone that needs more will make them
+    differ.
+    """
+    cells: list[str] = []
+    for first, last in ZONE_ROWS.values():
+        for row in (first - 1, first, last, last + 1):
+            for quadrant in ("NE", "NW", "SE", "SW"):
+                edge = last_column(quadrant, row)
+                cells += [
+                    f"{quadrant}({column:04d}/{row:04d})"
+                    for column in range(max(0, edge - 2), edge + 1)
+                ]
+    cells = [cell for cell in cells if itacart.is_valid_cell(cell)]
+    assert len(cells) >= 90
+
+    narrow = {cell: topology._contacts(cell) for cell in cells}
+
+    window, seam = topology._WINDOW, topology._SEAM_REACH
+    try:
+        topology._WINDOW, topology._SEAM_REACH = window + 4, seam + 4
+        topology._contacts.cache_clear()
+        wide = {cell: topology._contacts(cell) for cell in cells}
+    finally:
+        topology._WINDOW, topology._SEAM_REACH = window, seam
+        topology._contacts.cache_clear()
+
+    missed = {
+        cell: (narrow[cell], wide[cell]) for cell in cells if narrow[cell] != wide[cell]
+    }
+    assert missed == {}
+
+
+@pytest.mark.slow
+def test_the_poleward_step_composes_while_it_stays_inside_the_row_above() -> None:
+    """The rule's global consequence, enumerated rather than sampled.
+
+    ``north^k(X, Y) = (X - k, Y + k)`` holds for as long as the target column
+    still fits the row above. A whole column is walked from the equator to
+    prove where that stops, in both directions the walk can end.
+
+    From column 500 the walk reaches the prime meridian first: five hundred
+    steps of pure arithmetic, no deflection, ending on the triangle at column
+    zero, which has no poleward neighbour. From column 1500 the walk meets the
+    edge of the row before it meets the meridian, and from there on it rides
+    the border and the arithmetic no longer describes it — but it does reach
+    the pole, crossing quadrants twice on the way.
+    """
+
+    def parts(cell: str) -> tuple[str, int, int]:
+        return cell[:2], int(cell[3:7]), int(cell[8:12])
+
+    def walk(start: str) -> tuple[str, int, list[int], list[int]]:
+        cell, departures, crossings = start, [], []
+        for step in range(1000):
+            following = topology.get_neighbor(cell, "N")
+            if following is None:
+                return cell, step, departures, crossings
+            quadrant, column, row = parts(cell)
+            if parts(following) != (quadrant, column - 1, row + 1):
+                departures.append(step + 1)
+            if following[:2] != cell[:2]:
+                crossings.append(step + 1)
+            cell = following
+        return cell, 1000, departures, crossings
+
+    ended, steps, departures, crossings = walk("NE(0500/0000)")
+    assert (ended, steps) == ("NE(0000/0500)", 500)
+    assert departures == []
+    assert crossings == []
+    assert topology.get_neighbor(ended, "N") is None
+
+    ended, steps, departures, crossings = walk("NE(1500/0000)")
+    assert (ended, steps) == ("NE(0000/1000)", 1000)
+    assert departures[0] == 778
+    assert crossings == [800, 1000]
+
+    first = "NE(0723/0777)"
+    quadrant, column, row = parts(first)
+    assert last_column(quadrant, row + 1) < column - 1
+
+
+@pytest.mark.slow
+def test_a_directed_step_is_not_symmetric_at_the_boundary() -> None:
+    """Declared, because composing steps is a reasonable thing to want to do.
+
+    Adjacency is symmetric and the disks are symmetric. A *named direction* is
+    not, and two separate mechanisms break it.
+
+    The first is mirroring. Direction labels are read in the origin's own
+    quadrant, so ``E`` means away from the prime meridian on both sides of it.
+    Stepping west off the meridian triangle lands in the western quadrant, and
+    stepping east from there goes further west still, not back. The opposite
+    label is simply not the inverse of a step that changes quadrant.
+
+    The second is the tie-break. Where a side carries several cells the step
+    names the one sharing the longest boundary; that cell is ordinary, has
+    four directions, and spends them where its own lattice says.
+
+    Every pair below is genuinely adjacent, which is what makes this a
+    statement about directions and not about the tessellation.
+    """
+    opposite = {
+        "N": "S",
+        "S": "N",
+        "E": "W",
+        "W": "E",
+        "NE": "SW",
+        "SW": "NE",
+        "NW": "SE",
+        "SE": "NW",
+    }
+
+    cells: list[str] = []
+    for quadrant, row in (
+        ("NE", 708),
+        ("NE", 709),
+        ("NW", 708),
+        ("NW", 709),
+        ("SE", 170),
+        ("SE", 171),
+        ("NE", 300),
+        ("NE", 999),
+    ):
+        edge = last_column(quadrant, row)
+        cells += [
+            f"{quadrant}({column:04d}/{row:04d})"
+            for column in range(max(0, edge - 3), edge + 1)
+        ]
+        cells.append(
+            f"{quadrant}(0000/{row:04d})"
+            if quadrant[1] == "E"
+            else f"{quadrant}(0001/{row:04d})"
+        )
+    cells = [cell for cell in cells if itacart.is_valid_cell(cell)]
+
+    crossing, inside = 0, 0
+    for cell in cells:
+        for direction, back in opposite.items():
+            neighbour = topology.get_neighbor(cell, direction)
+            if neighbour is None or topology.get_neighbor(neighbour, back) == cell:
+                continue
+            if neighbour[:2] != cell[:2]:
+                crossing += 1
+            else:
+                inside += 1
+            if direction in ("N", "S", "E", "W"):
+                assert topology.are_neighbor_cells(cell, neighbour)
+
+    assert crossing > 0, "mirroring should break the inverse across a quadrant"
+    assert inside > 0, "the tie-break should break it inside one"
+
+    # The two named cases, so the mechanisms are pinned and not just counted.
+    assert topology.get_neighbor("NE(0000/0708)", "W") == "NW(0001/0708)"
+    assert topology.get_neighbor("NW(0001/0708)", "E") == "NW(0002/0708)"
+    assert topology.are_neighbor_cells("NE(0000/0708)", "NW(0001/0708)")
+
+    assert topology.get_neighbor("NE(0932/0709)", "N") == "NE(0930/0710)"
+    assert topology.get_neighbor("NE(0930/0710)", "S") == "NE(0931/0709)"
+    assert topology.are_neighbor_cells("NE(0932/0709)", "NE(0930/0710)")
+
+
+def test_the_index_route_stays_lexical_and_the_exception_set_does_not() -> None:
+    """Criterion 9, with its scope stated instead of implied.
+
+    The derivation consults nothing, anywhere: ``_lexical_target`` answers with
+    every geometric function and both existence predicates replaced by raisers.
+
+    Resolving a neighbour is a weaker claim, and the weakness is exactly the
+    exception set. Outside it the step is arithmetic plus a validity question,
+    so it survives with the rings unavailable. Inside it the neighbour is
+    measured, so it does not, and saying otherwise would make the criterion
+    vacuous rather than satisfied.
+    """
+
+    def refuse(*args: object, **kwargs: object) -> object:
+        raise AssertionError("consulted geometry")
+
+    lexical = ("NE(0500/0300)", "NE(0001/0300)", "NE(0500/0300(1(A1)))")
+    measured = ("NE(0000/0300)", "NE(1784/0300)", "NE(0000/1000)", "NW(0883/0708)")
+
+    saved = itacart.cells.cell_to_boundary
+    try:
+        topology._contacts.cache_clear()
+        itacart.cells.cell_to_boundary = refuse  # type: ignore[assignment]
+        topology.cell_to_boundary = refuse  # type: ignore[assignment]
+        for cell in lexical:
+            assert isinstance(topology.get_neighbor(cell, "E"), str)
+        for cell in measured:
+            with pytest.raises(AssertionError, match="consulted geometry"):
+                topology.get_neighbor(cell, "E")
+    finally:
+        itacart.cells.cell_to_boundary = saved  # type: ignore[assignment]
+        topology.cell_to_boundary = saved  # type: ignore[assignment]
+        topology._contacts.cache_clear()
+
+
+def test_a_step_inside_one_frame_is_never_checked_against_geometry() -> None:
+    """The interior path must not pay for the boundary's problem.
+
+    Only a frame change can make the arithmetic non-invertible, and every
+    boundary the normalisation handles changes quadrant, apart from the step
+    onto a polar cell. Testing instead whether the step left its resolution-1
+    cell would be true of every step at resolution 1 and would put a ring
+    computation on the interior path.
+    """
+    assert not topology._changes_frame(INTERIOR, "NE(0499/0301)")
+    assert not topology._changes_frame("NE(0500/0300(1(A1)))", "NE(0499/0300(2(A5)))")
+    assert topology._changes_frame("NE(0000/0300)", "NW(0001/0300)")
+    assert topology._changes_frame("NE(0001/0999)", "NE(0000/1000)")
