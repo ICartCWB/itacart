@@ -109,10 +109,11 @@ def test_figure_7a_is_a_valid_mixed_resolution_index() -> None:
 def test_figure_7a_refills_from_its_own_footprint() -> None:
     """Filling the footprint of Figure 7(a) returns Figure 7(a)'s cells.
 
-    The paper publishes an index, not the polygon behind it, so the round
-    trip goes index -> geometry -> index. Under the centre rule a cell
-    whose square is covered is kept, which makes the recovered set the
-    same set.
+    The paper publishes an index, not the polygon behind it, so this is
+    a fixed point -- ``fill(union(published)) == published`` -- and not
+    a check that the author's parcel produces the author's index. The
+    stronger claim is not available from the paper, and saying so is
+    part of the evidence.
     """
     from shapely.ops import unary_union
 
@@ -121,6 +122,49 @@ def test_figure_7a_refills_from_its_own_footprint() -> None:
     refilled = set(itacart.decompose(itacart.polyfill(footprint, 7)))
     expected = set(itacart.uncompact_cells(FIGURE_7A, 7))
     assert refilled == expected
+
+
+def test_figure_7a_is_reproduced_as_a_string() -> None:
+    """The compacted fill reproduces the published index character for character.
+
+    Stronger than the set comparison above, and the strongest check the
+    paper allows: the fill, run through the package's own compaction,
+    lands on the exact 415-character string the article prints, so the
+    package agrees with the authors on where to compact and not merely
+    on which ground is covered.
+    """
+    from shapely.ops import unary_union
+
+    cells = itacart.decompose(FIGURE_7A)
+    footprint = unary_union([itacart.cell_to_polygon(cell) for cell in cells])
+    assert itacart.compact_cells(itacart.polyfill(footprint, 7)) == FIGURE_7A
+
+
+def test_geometric_compaction_is_weaker_than_lexical_compaction() -> None:
+    """``compact=True`` compacts less than ``compact_cells`` does.
+
+    The fill compacts a node when the plane square is contained in the
+    projected geometry, which is a geometric test and sensitive to the
+    geodetic round trip that built the footprint. ``compact_cells`` asks
+    a lexical question -- are all the children present -- and answers yes
+    where the geometric test answers no. Measured on Figure 7(a): the
+    published index and the lexical compaction both hold 114 cells, the
+    geometric one holds 138, and they differ at exactly one node.
+
+    The ground covered is the same. This pins the divergence rather than
+    hiding it; which of the two ``compact=True`` should mean is an open
+    question for the bridge, not something this test settles.
+    """
+    from shapely.ops import unary_union
+
+    cells = itacart.decompose(FIGURE_7A)
+    footprint = unary_union([itacart.cell_to_polygon(cell) for cell in cells])
+    geometric = itacart.polyfill(footprint, 7, compact=True)
+    lexical = itacart.compact_cells(itacart.polyfill(footprint, 7))
+    assert itacart.count_cells(lexical) < itacart.count_cells(geometric)
+    assert set(itacart.uncompact_cells(geometric, 7)) == set(
+        itacart.uncompact_cells(lexical, 7)
+    )
 
 
 def test_figure_7a_lies_in_the_nw_quadrant() -> None:
@@ -275,6 +319,176 @@ def test_the_bound_holds_at_a_prescribed_resolution_across_parcel_sizes() -> Non
         assert abs(area - plane.area) <= plane.exterior.length * side
 
 
+def _plane_perimeter(plane: object) -> float:
+    """Total ring length of a projected polygon, holes included."""
+    return plane.exterior.length + sum(  # type: ignore[attr-defined]
+        hole.length for hole in plane.interiors  # type: ignore[attr-defined]
+    )
+
+
+def _residual_within_derived_bound(parcel: Polygon, resolution: int) -> bool:
+    """Whether the count's area error respects the proved bound.
+
+    The proof, in two lines. A cell whose closure does not meet the
+    outline is decided exactly, so only cells meeting the outline can be
+    misclassified. Every such cell lies inside the ``s*sqrt(2)``
+    neighbourhood of the outline, whose area is at most ``2*r*P +
+    pi*r*r``. Substituting ``r = s*sqrt(2)`` gives
+
+        |n*a - A| <= 2*sqrt(2)*P*s + 2*pi*s*s
+
+    which holds for any rectifiable outline, convex or not, holed or not.
+    """
+    plane = geometry._project(parcel)
+    side = itacart.cell_size(resolution)
+    perimeter = _plane_perimeter(plane)
+    bound = 2.0 * math.sqrt(2.0) * perimeter * side + 2.0 * math.pi * side * side
+    counted = itacart.count_internal_cells(parcel, resolution)
+    area = counted * itacart.nominal_cell_area(resolution)
+    return abs(area - plane.area) <= bound
+
+
+def _metres(value: float) -> float:
+    """Degrees of latitude for a length in metres."""
+    return value / 111_320.0
+
+
+def _degrees_lon(value: float, latitude: float = 45.0) -> float:
+    """Degrees of longitude for a length in metres at ``latitude``."""
+    return _metres(value) / math.cos(math.radians(latitude))
+
+
+def _extended_parcel_family() -> list[tuple[str, Polygon]]:
+    """Parcels the rectangle family does not cover.
+
+    The 168 parcels behind the residual measurement were all convex
+    axis-aligned rectangles far larger than a cell, which is a narrow
+    family to draw a bound from. These add a hole, a reentrant outline, a
+    sliver, a parcel smaller than one cell, a triangle and a star.
+    """
+    shell = [
+        (10.0, 45.0),
+        (10.0 + _degrees_lon(800), 45.0),
+        (10.0 + _degrees_lon(800), 45.0 + _metres(800)),
+        (10.0, 45.0 + _metres(800)),
+    ]
+    hole = [
+        (10.0 + _degrees_lon(300), 45.0 + _metres(300)),
+        (10.0 + _degrees_lon(500), 45.0 + _metres(300)),
+        (10.0 + _degrees_lon(500), 45.0 + _metres(500)),
+        (10.0 + _degrees_lon(300), 45.0 + _metres(500)),
+    ]
+    star = []
+    for step in range(12):
+        angle = 2.0 * math.pi * step / 12.0
+        radius = 400.0 if step % 2 == 0 else 150.0
+        star.append(
+            (
+                10.0 + _degrees_lon(radius * math.cos(angle)),
+                45.0 + _metres(radius * math.sin(angle)),
+            )
+        )
+    return [
+        ("holed", Polygon(shell, [hole])),
+        (
+            "reentrant",
+            Polygon(
+                [
+                    (10.0, 45.0),
+                    (10.0 + _degrees_lon(800), 45.0),
+                    (10.0 + _degrees_lon(800), 45.0 + _metres(300)),
+                    (10.0 + _degrees_lon(300), 45.0 + _metres(300)),
+                    (10.0 + _degrees_lon(300), 45.0 + _metres(800)),
+                    (10.0, 45.0 + _metres(800)),
+                ]
+            ),
+        ),
+        (
+            "sliver",
+            Polygon(
+                [
+                    (10.0, 45.0),
+                    (10.0 + _degrees_lon(2000), 45.0),
+                    (10.0 + _degrees_lon(2000), 45.0 + _metres(20)),
+                    (10.0, 45.0 + _metres(20)),
+                ]
+            ),
+        ),
+        (
+            "smaller than a cell",
+            Polygon(
+                [
+                    (10.0, 45.0),
+                    (10.0 + _degrees_lon(3), 45.0),
+                    (10.0 + _degrees_lon(3), 45.0 + _metres(3)),
+                    (10.0, 45.0 + _metres(3)),
+                ]
+            ),
+        ),
+        (
+            "triangle",
+            Polygon(
+                [
+                    (10.0, 45.0),
+                    (10.0 + _degrees_lon(600), 45.0),
+                    (10.0, 45.0 + _metres(600)),
+                ]
+            ),
+        ),
+        ("star", Polygon(star)),
+    ]
+
+
+@pytest.mark.parametrize(
+    "name, parcel",
+    _extended_parcel_family(),
+    ids=[name for name, _ in _extended_parcel_family()],
+)
+def test_the_derived_bound_holds_beyond_the_rectangle_family(
+    name: str, parcel: Polygon
+) -> None:
+    """The proved bound holds for holes, reentrant outlines and slivers."""
+    assert _residual_within_derived_bound(parcel, 7), name
+
+
+@pytest.mark.parametrize(
+    "name, parcel",
+    _extended_parcel_family(),
+    ids=[name for name, _ in _extended_parcel_family()],
+)
+def test_the_tighter_observed_bound_also_holds(name: str, parcel: Polygon) -> None:
+    """``P*s`` is tighter than the proof gives, and is not a theorem.
+
+    The derived bound carries a factor of ``2*sqrt(2)`` and an ``s*s``
+    term. ``P*s`` is about 2.8 times tighter and every parcel measured
+    respects it -- rectangles, holes, slivers, and combs of four to
+    sixty-four teeth one cell wide, worst ratio 0.34. No counterexample
+    was found, which is not the same as a proof, and the distinction is
+    recorded rather than blurred.
+    """
+    plane = geometry._project(parcel)
+    side = itacart.cell_size(7)
+    counted = itacart.count_internal_cells(parcel, 7)
+    area = counted * itacart.nominal_cell_area(7)
+    assert abs(area - plane.area) <= _plane_perimeter(plane) * side, name
+
+
+def test_the_bound_says_nothing_about_a_parcel_narrower_than_a_cell() -> None:
+    """Below about one cell across, the bound is true and useless.
+
+    A three-metre parcel at ten-metre cells has a bound of thirteen times
+    its own area, so it constrains nothing. The bound informs only while
+    ``P*s < A``, which is the same as saying the parcel is more than
+    roughly one cell wide. Worth pinning, because a bound quoted outside
+    its useful range is how a specification becomes decoration.
+    """
+    tiny = dict(_extended_parcel_family())["smaller than a cell"]
+    plane = geometry._project(tiny)
+    side = itacart.cell_size(7)
+    assert _plane_perimeter(plane) * side > plane.area
+    assert _residual_within_derived_bound(tiny, 7)
+
+
 def test_a_positional_tolerance_selects_one_resolution() -> None:
     """The ladder a tolerance picks from is decimal and unambiguous.
 
@@ -321,23 +535,109 @@ def test_count_matches_the_centre_mode_fill(parcel: Polygon) -> None:
 # --------------------------------------------------------------------------
 
 
+INDEX_RENDERING_DOORS: tuple[tuple[str, str], ...] = (
+    ("itacart.cells", "_from_path"),
+    ("itacart.cells", "_quantize"),
+    ("itacart.cells", "geo_to_cell"),
+    ("itacart.cells", "sinusoidal_to_cell"),
+    ("itacart.hierarchy", "_render"),
+    ("itacart.hierarchy", "_descend"),
+    ("itacart.hierarchy", "_shift_column"),
+    ("itacart.hierarchy", "_parent_cell"),
+    ("itacart.hierarchy", "common_ancestor"),
+    ("itacart.hierarchy", "compact_cells"),
+    ("itacart.index", "_canonical_base"),
+    ("itacart.index", "_render_path"),
+    ("itacart.index", "_render_node"),
+    ("itacart.index", "_render_tree"),
+    ("itacart.index", "compose"),
+    ("itacart.index", "normalize"),
+    ("itacart.topology", "_contact"),
+    ("itacart.topology", "_eastern"),
+    ("itacart.topology", "_spell"),
+    ("itacart.topology", "_encode"),
+)
+"""Every route in the package from components to an index string.
+
+Enumerated rather than sampled, and the enumeration is itself the
+measurement: a proof that counting names no cell is only as good as the
+list of ways a cell could be named. Four of these are the duplicated
+renderers the package already tracks; the rest reach a string by other
+paths.
+
+Two of them, the contact kind and the quadrant name, do not build an
+index at all. They are armed anyway. The list is derived from a
+mechanical rule -- every function in these modules annotated to return
+``str`` -- rather than curated by judgement about which ones "really"
+render, because a curated list is exactly what goes stale without
+anyone noticing.
+
+Hand-written first, and the completeness check below found seven more.
+"""
+
+
+def test_the_door_list_is_complete() -> None:
+    """Every enumerated door exists, and none was missed.
+
+    The second half is the part that matters. A list of doors that has
+    fallen behind the code makes the guard below prove less than it
+    claims while still passing, which is the failure mode this whole
+    test pair exists to avoid.
+    """
+    import importlib
+    import inspect
+
+    for module_name, attribute in INDEX_RENDERING_DOORS:
+        module = importlib.import_module(module_name)
+        assert hasattr(module, attribute), f"{module_name}.{attribute} is gone"
+
+    listed = set(INDEX_RENDERING_DOORS)
+    found: set[tuple[str, str]] = set()
+    for module_name in {name for name, _ in INDEX_RENDERING_DOORS}:
+        module = importlib.import_module(module_name)
+        for name, value in vars(module).items():
+            if not callable(value) or isinstance(value, type):
+                continue
+            if getattr(value, "__module__", None) != module_name:
+                continue
+            try:
+                hints = inspect.get_annotations(value, eval_str=False)
+            except (TypeError, ValueError):  # pragma: no cover - defensive
+                continue
+            if hints.get("return") in ("str", str):
+                found.add((module_name, name))
+    missed = found - listed
+    assert not missed, f"unlisted routes to an index string: {sorted(missed)}"
+
+
 def test_count_never_builds_an_index_fragment(
     parcel: Polygon, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Counting names no cell, proved by removing the ability to name one.
+    """Counting names no cell, proved against every route to a string.
 
-    Every route from the descent to index text goes through
-    ``_fill_node`` or ``_expansion``. Replacing both with detonators is
-    a construction proof rather than a memory measurement, and it fails
-    loudly if a future change starts assembling text during the count.
+    Patching the descent's own helpers would prove nothing: the property
+    is that no *package* route to an index string is reached, and a
+    descent that rendered through another module would satisfy a guard
+    aimed at itself. So all thirteen enumerated doors are replaced with
+    detonators at once, and the count has to survive with every one of
+    them armed.
+
+    Measured with the doors armed: 33,258 cells at resolution 7, none of
+    the doors touched.
     """
+    import importlib
 
-    def _detonate(*args: object, **kwargs: object) -> str:
-        raise AssertionError("count_internal_cells built index text")
+    def _detonate(module_name: str, attribute: str):
+        def fired(*args: object, **kwargs: object) -> str:
+            raise AssertionError(f"the count reached {module_name}.{attribute}")
 
-    monkeypatch.setattr(geometry, "_fill_node", _detonate)
-    monkeypatch.setattr(geometry, "_expansion", _detonate)
-    assert itacart.count_internal_cells(parcel, 6) > 0
+        return fired
+
+    for module_name, attribute in INDEX_RENDERING_DOORS:
+        module = importlib.import_module(module_name)
+        monkeypatch.setattr(module, attribute, _detonate(module_name, attribute))
+
+    assert itacart.count_internal_cells(parcel, 7) == 33_258
 
 
 def test_count_stack_depth_is_the_resolution_difference(parcel: Polygon) -> None:
@@ -693,9 +993,36 @@ def test_geometry_crossing_the_antemeridian_is_refused() -> None:
 
 
 def test_a_geometry_near_but_not_across_the_line_is_not_refused() -> None:
-    """Strictly astride, not merely close: the two differ by a factor of 15."""
+    """Strictly astride, not merely close."""
     near = Polygon([(179.0, 10.0), (179.2, 10.0), (179.2, 10.2), (179.0, 10.2)])
     assert not itacart.crosses_antemeridian(near)
+
+
+def test_the_antemeridian_test_is_strict_and_not_a_tolerance() -> None:
+    """A geometry a thousandth of a degree from the line still does not cross.
+
+    This is the case that separates the strict reading from a tolerance
+    reading: a predicate that refused anything within some epsilon of 180
+    would refuse this polygon, whose far edge sits 0.001 degrees short of
+    the line. The strict predicate asks whether the outline is astride
+    the meridian at the ordinate in question, and it is not.
+
+    The earlier test does not discriminate: at 179.0 both readings agree.
+    """
+    hugging = Polygon(
+        [
+            (179.990, 10.0),
+            (179.999, 10.0),
+            (179.999, 10.01),
+            (179.990, 10.01),
+        ]
+    )
+    assert not itacart.crosses_antemeridian(hugging)
+
+    astride = Polygon(
+        [(179.999, 10.0), (-179.999, 10.0), (-179.999, 10.01), (179.999, 10.01)]
+    )
+    assert itacart.crosses_antemeridian(astride)
 
 
 # --------------------------------------------------------------------------
