@@ -1947,15 +1947,58 @@ def test_the_three_families_are_still_refused_when_actually_touched() -> None:
                 geometry._check_addressable(quadrant, column, row)
 
 
+def _screen_refuses(quadrant: str, u0: float, v0: float, side: float) -> bool:
+    """The geometric screen, expressed only on the node's own coordinates.
+
+    The lattice column of a node of side ``s`` at ``(u0, v0)`` is
+    ``(u0 - v0) / s``, which reduces to ``u_index - row`` at resolution
+    1. Nothing here names a cell, which is the point: the fill may not
+    reach an index-rendering door, so it cannot ask ``absorbs_border``.
+    """
+    column = round((u0 - v0) / side)
+    row = round(v0 / side)
+    last_here = itacart.last_lattice_column(quadrant, row, side)
+    beyond = itacart.last_lattice_column(quadrant, row + 1, side)
+    return column <= 0 or last_here <= 0 or beyond <= 0 or column >= last_here
+
+
+def _is_anomalous(cell: str) -> bool:
+    """The index-side truth the screen has to agree with."""
+    try:
+        if itacart.absorbs_border(cell):
+            return True
+        return itacart.cell_shape(cell) != "parallelogram"
+    except Exception:  # pragma: no cover - defensive
+        return True
+
+
+def _children_in_lockstep(
+    cell: str, u0: float, v0: float, side: float, level: int
+) -> list[tuple[str, float, float, float, int]]:
+    """Every child of a node, as index and as square, paired by position."""
+    step = level + 1
+    divisor = itacart.linear_refinement_ratio(step)
+    child = side / divisor
+    return [
+        (
+            hierarchy._descend(cell, geometry._child_code(row, column, step)),
+            u0 + column * child,
+            v0 + row * child,
+            child,
+            step,
+        )
+        for row in range(divisor)
+        for column in range(divisor)
+    ]
+
+
 def test_the_geometric_screen_never_admits_an_anomalous_cell() -> None:
     """The screen is validated against the index side, by enumeration.
 
-    The fill may not name a cell, so the screen cannot ask
-    ``absorbs_border``. It uses the lattice column of the node instead,
-    ``(u0 - v0) / side``, which reduces to ``u_index - row`` at
-    resolution 1. This walks four quadrants, the three families and the
-    ordinary interior, and requires the geometric answer never to be
-    more permissive than the index one.
+    Complete to level 3, over the three families and the ordinary
+    interior in four quadrants. Every node is compared both ways, and
+    the geometric answer is never allowed to be the more permissive of
+    the two.
 
     Divergences do exist and are all in the safe direction. Inside the
     meridian family they sit at a negative column -- west of the line,
@@ -1963,15 +2006,20 @@ def test_the_geometric_screen_never_admits_an_anomalous_cell() -> None:
     ``u - v`` positive -- and that much is asserted. Inside the
     border-absorbing family they sit at positive columns, because
     absorption gives the parent more children than the square
-    subdivision has and the two trees are not the same tree there. Only
+    subdivision has and the two are not the same tree there. Only
     conservativeness is claimed for that family; equivalence is not.
+
+    Three levels is not thirteen, and the depth is the whole point of
+    the screen, so the shallow sweep is the floor and not the argument.
+    ``test_the_screen_agrees_all_the_way_down_the_frontier`` carries it
+    to resolution 13.
     """
     side = itacart.cell_size(1)
     checked = 0
     for quadrant in QUADRANTS:
-        for row in (0, 100, 451):
+        for row in (0, 1, 100, 451, 700):
             last = itacart.last_lattice_column(quadrant, row, side)
-            for column in (0, 1, last - 1, last):
+            for column in sorted({0, 1, 2, last // 2, last - 1, last, last + 1}):
                 stack = [
                     (
                         f"{quadrant}({column:04d}/{row:04d})",
@@ -1983,52 +2031,72 @@ def test_the_geometric_screen_never_admits_an_anomalous_cell() -> None:
                 ]
                 while stack:
                     cell, u0, v0, cell_side, level = stack.pop()
-                    lattice_column = round((u0 - v0) / cell_side)
-                    lattice_row = round(v0 / cell_side)
-                    last_here = itacart.last_lattice_column(
-                        quadrant, lattice_row, cell_side
-                    )
-                    beyond = itacart.last_lattice_column(
-                        quadrant, lattice_row + 1, cell_side
-                    )
-                    try:
-                        itacart.absorbs_border(cell)
-                        anomalous = (
-                            itacart.absorbs_border(cell)
-                            or itacart.cell_shape(cell) != "parallelogram"
-                        )
-                    except Exception:  # pragma: no cover - defensive
-                        anomalous = True
-                    refused = (
-                        lattice_column <= 0
-                        or last_here <= 0
-                        or beyond <= 0
-                        or lattice_column >= last_here
-                    )
+                    refused = _screen_refuses(quadrant, u0, v0, cell_side)
+                    anomalous = _is_anomalous(cell)
                     checked += 1
                     if anomalous and not refused:
                         raise AssertionError(f"screen admits {cell}")
                     if refused and not anomalous and column == 0:
-                        assert lattice_column < 0, cell
-                    if level >= 3:
-                        continue
-                    step = level + 1
-                    divisor = itacart.linear_refinement_ratio(step)
-                    child = cell_side / divisor
-                    for r in range(divisor):
-                        for c in range(divisor):
-                            stack.append(
-                                (
-                                    hierarchy._descend(
-                                        cell, geometry._child_code(r, c, step)
-                                    ),
-                                    u0 + c * child,
-                                    v0 + r * child,
-                                    child,
-                                    step,
-                                )
-                            )
-    assert checked > 5_000, checked
+                        assert round((u0 - v0) / cell_side) < 0, cell
+                    if level < 3:
+                        stack.extend(
+                            _children_in_lockstep(cell, u0, v0, cell_side, level)
+                        )
+    assert checked > 14_000, checked
+
+
+def test_the_screen_agrees_all_the_way_down_the_frontier() -> None:
+    """The same agreement, carried from resolution 1 to resolution 13.
+
+    A complete sweep to resolution 13 is not enumerable -- a single base
+    cell holds a million cells per axis down there -- so this walks the
+    frontier instead, which is where the derivation says the only
+    anomalies can be. At every step *all* children of the current node
+    are compared both ways, and the walk then continues into an
+    anomalous one. Ordinary nodes are covered exhaustively by the
+    shallow sweep; what this adds is depth on the one path where the
+    families actually live.
+
+    The shape of the shortcut is deliberate. The refinement is a fixed
+    point only where the enumeration is complete, and the enumeration is
+    complete at every level of the walk -- it is the breadth across
+    levels that is traded away, not the breadth within one.
+
+    This test exists because a bound measured at two levels and asserted
+    for thirteen is exactly how the fixed overlap threshold survived
+    into this phase.
+    """
+    base = itacart.cell_size(1)
+    deepest = 0
+    checked = 0
+    for quadrant in QUADRANTS:
+        last = itacart.last_lattice_column(quadrant, 451, base)
+        polar = max(
+            row
+            for row in range(700, 1000)
+            if itacart.last_lattice_column(quadrant, row, base) > 0
+        )
+        for column, row in ((0, 451), (last, 451), (1, polar)):
+            cell = f"{quadrant}({column:04d}/{row:04d})"
+            u0, v0, side, level = (column + row) * base, row * base, base, 1
+            while level < 13:
+                children = _children_in_lockstep(cell, u0, v0, side, level)
+                anomalous_children = []
+                for name, cu, cv, cs, step in children:
+                    refused = _screen_refuses(quadrant, cu, cv, cs)
+                    anomalous = _is_anomalous(name)
+                    checked += 1
+                    if anomalous and not refused:
+                        raise AssertionError(f"screen admits {name}")
+                    if anomalous:
+                        anomalous_children.append((name, cu, cv, cs, step))
+                if not anomalous_children:
+                    break
+                cell, u0, v0, side, level = anomalous_children[-1]
+                deepest = max(deepest, level)
+            assert level == 13, (quadrant, column, row, level)
+    assert deepest == 13, deepest
+    assert checked > 1_500, checked
 
 
 def test_the_band_of_a_polar_base_cell_is_the_whole_cell() -> None:
