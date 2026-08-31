@@ -42,8 +42,27 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
+      # Coverage is instrumented on the one cell that uploads it. The
+      # other eleven ran the same instrumentation and threw the report
+      # away, which bought nothing and slowed every cell.
+      #
+      # The slow geometric tests are NOT deselected outside that cell.
+      # They are what the matrix exists to catch: they are sensitive to
+      # floating point, and running them on one platform would defeat
+      # the point of having three.
+      #
+      # --doctest-modules runs alongside coverage rather than
+      # everywhere, so that a docstring example is executed on every push
+      # without changing what a bare `pytest` does locally. Both paths are
+      # named: a bare `--doctest-modules src` would override the testpaths
+      # setting and collect the four doctests and nothing else, which
+      # passes green while running none of the suite.
       - name: pytest
-        run: pytest --cov=itacart --cov-report=xml
+        if: matrix.os != 'ubuntu-latest' || matrix.python-version != '3.12'
+        run: pytest
+      - name: pytest with coverage and doctests
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: pytest --doctest-modules src tests --cov=itacart --cov-report=xml
       - name: upload coverage
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         uses: codecov/codecov-action@v4
