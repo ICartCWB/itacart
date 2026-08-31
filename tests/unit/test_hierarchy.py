@@ -1007,7 +1007,8 @@ class TestSelectionOfBorderChildren:
                     if not boundary.is_valid_cell(candidate):
                         continue
                     outline = Polygon(boundary.plane_ring(candidate)[1])
-                    if outline.intersection(body).area <= hy._OVERLAP_EPSILON_M2:
+                    epsilon = hy._OVERLAP_EPSILON_RATIO * cell_size(2) ** 2
+                    if outline.intersection(body).area <= epsilon:
                         surplus += 1
         assert surplus == 0
 
@@ -1060,7 +1061,8 @@ class TestSelectionOfBorderChildren:
                             continue
                         outline = Polygon(boundary.plane_ring(candidate)[1])
                         area = outline.intersection(body).area
-                        if area <= hy._OVERLAP_EPSILON_M2:
+                        epsilon = hy._OVERLAP_EPSILON_RATIO * cell_size(level) ** 2
+                        if area <= epsilon:
                             rejected += 1
         assert parents > 2000
         assert rejected == 0

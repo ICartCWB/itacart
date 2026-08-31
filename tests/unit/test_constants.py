@@ -301,7 +301,7 @@ def test_res1_index_bounds_match_table1() -> None:
 
 
 # --------------------------------------------------------------------------
-# Quadrantes, sintaxe do indice e formas de celula
+# Quadrants, index syntax and cell shapes
 # --------------------------------------------------------------------------
 
 

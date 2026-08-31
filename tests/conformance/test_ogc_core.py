@@ -58,10 +58,54 @@ class TestCore:
         """Fourteen ordered levels with the documented refinement ratios."""
         raise NotImplementedError
 
-    @pytest.mark.xfail(raises=NotImplementedError, reason="stub")
     def test_req_16_quantization(self) -> None:
-        """Vector data maps to cell sets via polyfill and vertex_to_cell."""
-        raise NotImplementedError
+        """Vector data maps to cell sets via polyfill and vertex_to_cell.
+
+        Completed by F7, which supplied both halves of the operation the
+        requirement names. Quantization is the map from vector data to a
+        cell set at a stated resolution, and the requirement is about
+        vector data rather than about polygons, so all three dimensions
+        are asserted.
+
+        The areal half is checked for closure, not merely for being
+        non-empty: refilling the footprint of the cell set has to return
+        the cell set. The vertex half is checked for sequence, since an
+        unordered answer would quantize the geometry without preserving
+        the thing that lets it be reconstructed.
+        """
+        from shapely.geometry import LineString, Point, Polygon
+
+        parcel = Polygon(
+            [
+                (-73.9812, 40.7681),
+                (-73.9581, 40.8005),
+                (-73.9497, 40.7968),
+                (-73.9730, 40.7644),
+            ]
+        )
+
+        filled = itacart.polyfill(parcel, 5)
+        cells = itacart.decompose(filled)
+        assert cells
+        assert all(itacart.get_resolution(cell) == 5 for cell in cells)
+
+        from shapely.ops import unary_union
+
+        footprint = unary_union([itacart.cell_to_polygon(cell) for cell in cells])
+        assert itacart.polyfill(footprint, 5) == filled
+
+        vertices = itacart.vertex_to_cell(parcel, 5)
+        assert vertices
+        assert all(itacart.get_resolution(cell) == 5 for cell in vertices)
+        assert itacart.cells_to_geometry(vertices).geom_type == "Polygon"
+
+        line = LineString([(-73.98, 40.77), (-73.96, 40.79)])
+        assert len(itacart.vertex_to_cell(line, 5)) == 2
+
+        point = Point(-73.97, 40.78)
+        assert itacart.vertex_to_cell(point, 5) == [
+            itacart.geo_to_cell(-73.97, 40.78, 5)
+        ]
 
     def test_req_17_topological_queries(self) -> None:
         """Parent, child and neighbour resolve from the index alone.

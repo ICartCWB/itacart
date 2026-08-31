@@ -302,15 +302,102 @@ def _check_addressable(quadrant: str, column: int, row: int) -> None:
         )
 
 
+def _anomalous_band(
+    quadrant: str, column: int, row: int, side: float
+) -> "BaseGeometry":
+    """The part of a resolution-1 cell that is still anomalous at ``side``.
+
+    The three families are bounded by lines of constant ``w = u - v`` or
+    of constant ``v``, so each one is a band and their union is what the
+    screen has to protect. Returned in lattice coordinates.
+
+    Derived, and validated by enumeration against
+    :func:`_check_addressable` over 88,880 nodes in four quadrants. The
+    lattice column of a node of side ``s`` at ``(u0, v0)`` is
+    ``(u0 - v0) / s``, which reduces to ``u_index - row`` at resolution
+    1. From it, ``column`` of a child is ``column * d + (c - r)`` with
+    ``c`` and ``r`` in ``[0, d)``, so a node with a positive column never
+    fathers one at column zero: the meridian family does not spread, and
+    neither do the other two.
+
+    Each band is drawn one cell side wide, which is an outer bound on a
+    family that is really a staircase of single cells. Refusing the
+    bound refuses at most one extra cell of width and never one less,
+    and one cell of width is the whole point of the exercise.
+    """
+    from shapely.geometry import Polygon, box
+    from shapely.ops import unary_union
+
+    u0 = (column + row) * _L1
+    v0 = row * _L1
+    cell = box(u0, v0, u0 + _L1, v0 + _L1)
+    reach = 4.0 * _L1
+    bands: list["BaseGeometry"] = []
+
+    def by_column(lo: float, hi: float) -> "BaseGeometry":
+        """The band ``lo <= u - v <= hi``, as a sheared quadrilateral."""
+        return Polygon(
+            [
+                (v0 - reach + lo, v0 - reach),
+                (v0 - reach + hi, v0 - reach),
+                (v0 + reach + hi, v0 + reach),
+                (v0 + reach + lo, v0 + reach),
+            ]
+        )
+
+    if column <= 0:
+        bands.append(by_column(-reach, side))
+
+    top_row = int(math.floor((v0 + _L1 - side / 2.0) / side))
+    last_at_top = last_lattice_column(quadrant, top_row, side)
+    if last_at_top > 0:
+        bands.append(by_column(last_at_top * side, reach))
+    else:
+        bands.append(cell)
+
+    polar_v = None
+    probe = int(math.floor(v0 / side))
+    if last_lattice_column(quadrant, probe + 1, side) <= 0:
+        polar_v = v0
+    elif last_lattice_column(quadrant, top_row + 1, side) <= 0:
+        lo, hi = probe, top_row
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if last_lattice_column(quadrant, mid + 1, side) <= 0:
+                hi = mid
+            else:
+                lo = mid + 1
+        polar_v = lo * side
+    if polar_v is not None:
+        bands.append(box(u0 - reach, polar_v, u0 + reach, v0 + _L1))
+
+    return unary_union([band.intersection(cell) for band in bands])
+
+
 def _base_cells(
-    prepared: "PreparedGeometry", lattice: "BaseGeometry", quadrant: str
+    prepared: "PreparedGeometry",
+    lattice: "BaseGeometry",
+    quadrant: str,
+    resolution: int,
 ) -> list[tuple[int, int]]:
     """Resolution-1 ``(column, row)`` pairs whose square meets ``lattice``.
 
     Candidates come from the bounding box, but only those a square
-    actually meets are screened by :func:`_check_addressable`. Screening
-    the whole box instead would refuse a geometry for a neighbouring
-    column it never touches.
+    actually meets are screened. Screening the whole box instead would
+    refuse a geometry for a neighbouring column it never touches.
+
+    The screen runs at ``resolution``, not at resolution 1. A base cell
+    of one of the three families holds mostly ordinary descendants --
+    measured, 90 of 100 for the meridian, 107 of 114 for the last
+    column, 139 of 144 for the polar row -- and screening the family at
+    resolution 1 refused all of them along with the few that deserved
+    it. That is a band up to ten kilometres wide standing in for an
+    anomaly one cell wide: a thousand times too much at resolution 7 and
+    a million times at resolution 13.
+
+    So an anomalous base cell is not refused for being one. Its
+    anomalous band at the target side is computed and the geometry is
+    refused only if it reaches it.
     """
     from shapely.geometry import box
 
@@ -327,7 +414,14 @@ def _base_cells(
             if not prepared.intersects(box(u0, v0, u0 + _L1, v0 + _L1)):
                 continue
             column = u_index - row
-            _check_addressable(quadrant, column, row)
+            try:
+                _check_addressable(quadrant, column, row)
+            except (DomainError, NonExistentCellError):
+                band = _anomalous_band(quadrant, column, row, cell_size(resolution))
+                if band.is_empty or not prepared.intersects(band):
+                    out.append((column, row))
+                    continue
+                raise
             out.append((column, row))
     return out
 
@@ -726,7 +820,7 @@ def polyfill(
         # Sorted by column then row so that the siblings come out in the
         # order the index is read in. compose() preserves the order it is
         # given rather than imposing one, so the ordering has to be here.
-        cells = sorted(_base_cells(view.prepared, view.geometry, quadrant))
+        cells = sorted(_base_cells(view.prepared, view.geometry, quadrant, resolution))
         parts = [f for f in _map_jobs(cells, _one, n_jobs) if f is not None]
         if parts:
             joined = SIBLING_SEPARATOR.join(parts)
@@ -817,7 +911,7 @@ def count_internal_cells(polygon: "Polygon", resolution: int, n_jobs: int = 1) -
                 _v.prepared, (column + row) * _L1, row * _L1, _L1, 1, resolution
             )
 
-        cells = _base_cells(view.prepared, view.geometry, quadrant)
+        cells = _base_cells(view.prepared, view.geometry, quadrant, resolution)
         total += sum(_map_jobs(cells, _one, n_jobs))
     return total
 
@@ -1057,9 +1151,31 @@ def densify_segment(
     step = distance / pieces
     out = [(lon1, lat1)]
     for index in range(1, pieces):
-        out.append(direct_geodesic(lon1, lat1, azimuth, step * index))
+        longitude, latitude = direct_geodesic(lon1, lat1, azimuth, step * index)
+        out.append((_on_the_branch_of(lon1, longitude), latitude))
     out.append((lon2, lat2))
     return out
+
+
+def _on_the_branch_of(reference: float, longitude: float) -> float:
+    """Move ``longitude`` onto the 360-degree branch of ``reference``.
+
+    :func:`itacart.geodesy.direct_geodesic` normalises what it returns to
+    ``(-180, 180]``, which is the right answer to the question it is
+    asked and the wrong one for densification. A segment written from
+    179.9 to 180.3 -- the natural way to describe a footprint inside an
+    extension zone, where the domain reaches past the antemeridian --
+    has interior points at 180.1, and normalising those to -179.9 folds
+    the ring back across the globe. The result self-intersects, and the
+    quadrant clip downstream fails inside GEOS with a topology error
+    rather than anywhere the package can explain.
+
+    Densification therefore keeps the branch the caller wrote. Segments
+    that genuinely wrap are refused upstream by
+    :func:`itacart.boundary.crosses_antemeridian`, so no segment reaching
+    here spans more than half the globe and the branch is unambiguous.
+    """
+    return longitude - 360.0 * round((longitude - reference) / 360.0)
 
 
 def _densify_ring(

@@ -13,7 +13,9 @@ two thousand, and a random draw finds it only by luck.
 
 from __future__ import annotations
 
+import itertools
 import math
+from typing import Callable, Iterable
 
 import pytest
 from shapely.geometry import (
@@ -28,7 +30,8 @@ from shapely.geometry import (
 )
 
 import itacart
-from itacart import geometry
+from itacart import boundary, geometry, hierarchy
+from itacart.constants import QUADRANTS
 from itacart.exceptions import (
     AntemeridianError,
     DensificationError,
@@ -326,23 +329,37 @@ def _plane_perimeter(plane: object) -> float:
     )
 
 
+_BOUND_RADIUS_IN_SIDES = math.sqrt(5.0)
+"""Radius of the outline neighbourhood, in cell sides.
+
+The radius is the diameter of a cell, and the cell is not a square. On
+the plane of the parallels it has base ``(s, 0)`` and side ``(-s, s)``,
+so its longer diagonal is ``s*sqrt(5)`` and not the ``s*sqrt(2)`` a
+square would give. The value is asserted against a measured cell by
+``test_the_bound_radius_is_the_measured_cell_diameter`` so that it
+cannot drift back to a hand-written number.
+"""
+
+
 def _residual_within_derived_bound(parcel: Polygon, resolution: int) -> bool:
     """Whether the count's area error respects the proved bound.
 
     The proof, in two lines. A cell whose closure does not meet the
     outline is decided exactly, so only cells meeting the outline can be
-    misclassified. Every such cell lies inside the ``s*sqrt(2)``
-    neighbourhood of the outline, whose area is at most ``2*r*P +
-    pi*r*r``. Substituting ``r = s*sqrt(2)`` gives
+    misclassified. Every such cell lies inside the neighbourhood of the
+    outline whose radius ``r`` is the cell diameter, and that
+    neighbourhood has area at most ``2*r*P + pi*r*r``. Substituting
+    ``r = s*sqrt(5)`` gives
 
-        |n*a - A| <= 2*sqrt(2)*P*s + 2*pi*s*s
+        |n*a - A| <= 2*sqrt(5)*P*s + 5*pi*s*s
 
     which holds for any rectifiable outline, convex or not, holed or not.
     """
     plane = geometry._project(parcel)
     side = itacart.cell_size(resolution)
     perimeter = _plane_perimeter(plane)
-    bound = 2.0 * math.sqrt(2.0) * perimeter * side + 2.0 * math.pi * side * side
+    radius = _BOUND_RADIUS_IN_SIDES * side
+    bound = 2.0 * radius * perimeter + math.pi * radius * radius
     counted = itacart.count_internal_cells(parcel, resolution)
     area = counted * itacart.nominal_cell_area(resolution)
     return abs(area - plane.area) <= bound
@@ -459,8 +476,8 @@ def test_the_derived_bound_holds_beyond_the_rectangle_family(
 def test_the_tighter_observed_bound_also_holds(name: str, parcel: Polygon) -> None:
     """``P*s`` is tighter than the proof gives, and is not a theorem.
 
-    The derived bound carries a factor of ``2*sqrt(2)`` and an ``s*s``
-    term. ``P*s`` is about 2.8 times tighter and every parcel measured
+    The derived bound carries a factor of ``2*sqrt(5)`` and an ``s*s``
+    term. ``P*s`` is about 4.5 times tighter and every parcel measured
     respects it -- rectangles, holes, slivers, and combs of four to
     sixty-four teeth one cell wide, worst ratio 0.34. No counterexample
     was found, which is not the same as a proof, and the distinction is
@@ -471,6 +488,23 @@ def test_the_tighter_observed_bound_also_holds(name: str, parcel: Polygon) -> No
     counted = itacart.count_internal_cells(parcel, 7)
     area = counted * itacart.nominal_cell_area(7)
     assert abs(area - plane.area) <= _plane_perimeter(plane) * side, name
+
+
+def test_the_bound_radius_is_the_measured_cell_diameter() -> None:
+    """The neighbourhood radius is measured off a cell, not off a square.
+
+    ``s*sqrt(2)`` is the diagonal of a square and the cell is not one, so
+    a bound built on it is understated by a factor of 1.58 and is not the
+    bound the proof gives. Measuring the diameter here keeps the constant
+    honest: writing it by hand again fails this test.
+    """
+    plane = geometry._project(Polygon(itacart.cell_to_boundary("NE(0500/0300)")))
+    corners = list(plane.exterior.coords)[:-1]
+    diameter = max(math.dist(a, b) for a, b in itertools.combinations(corners, 2))
+    assert diameter / itacart.cell_size(1) == pytest.approx(
+        _BOUND_RADIUS_IN_SIDES, rel=1e-9
+    )
+    assert _BOUND_RADIUS_IN_SIDES > math.sqrt(2.0)
 
 
 def test_the_bound_says_nothing_about_a_parcel_narrower_than_a_cell() -> None:
@@ -535,7 +569,7 @@ def test_count_matches_the_centre_mode_fill(parcel: Polygon) -> None:
 # --------------------------------------------------------------------------
 
 
-INDEX_RENDERING_DOORS: tuple[tuple[str, str], ...] = (
+_PREVIOUSLY_LISTED_DOORS: tuple[tuple[str, str], ...] = (
     ("itacart.cells", "_from_path"),
     ("itacart.cells", "_quantize"),
     ("itacart.cells", "geo_to_cell"),
@@ -557,57 +591,153 @@ INDEX_RENDERING_DOORS: tuple[tuple[str, str], ...] = (
     ("itacart.topology", "_spell"),
     ("itacart.topology", "_encode"),
 )
-"""Every route in the package from components to an index string.
+"""The twenty doors the previous rule found, kept as a regression floor.
 
-Enumerated rather than sampled, and the enumeration is itself the
-measurement: a proof that counting names no cell is only as good as the
-list of ways a cell could be named. Four of these are the duplicated
-renderers the package already tracks; the rest reach a string by other
-paths.
-
-Two of them, the contact kind and the quadrant name, do not build an
-index at all. They are armed anyway. The list is derived from a
-mechanical rule -- every function in these modules annotated to return
-``str`` -- rather than curated by judgement about which ones "really"
-render, because a curated list is exactly what goes stale without
-anyone noticing.
-
-Hand-written first, and the completeness check below found seven more.
+The rule that produced them matched a bare ``str`` return annotation in
+four named modules. Widening it must not lose any of these, which is
+what ``test_the_widening_dropped_no_previous_door`` checks.
 """
 
 
-def test_the_door_list_is_complete() -> None:
-    """Every enumerated door exists, and none was missed.
+_DOORS_ON_THE_COUNT_PATH: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("itacart.boundary", "_zone_of_row"),
+        ("itacart.geometry", "_prepare"),
+        ("itacart.geometry", "_quadrant_pieces"),
+    }
+)
+"""The only routes to a ``str`` the count legitimately takes.
 
-    The second half is the part that matters. A list of doors that has
-    fallen behind the code makes the guard below prove less than it
-    claims while still passing, which is the failure mode this whole
-    test pair exists to avoid.
+Measured rather than reasoned: everything the rule finds was armed at
+once, and whatever fired was moved here until the count survived. All
+three return a label -- an extension zone name or a quadrant name --
+and none of them names a cell, so the property under test survives
+their being called.
+
+Pinned in both directions, because a list of exemptions is exactly the
+kind of thing that grows quietly. ``test_count_never_builds_an_index_fragment``
+arms everything else and survives, so nothing else is on the path;
+``test_every_exempted_door_is_really_on_the_count_path`` arms each of
+these alone and requires it to fire, so nothing here is idle.
+"""
+
+
+def _index_rendering_doors() -> list[tuple[str, str]]:
+    """Every route in the package from components to an index string.
+
+    Discovered, not listed, and widened on the three axes where the
+    previous rule was narrow.
+
+    First, it matched ``hints.get("return") in ("str", str)``, so only a
+    bare ``str`` counted. ``list[str]``, ``Iterator[str]``,
+    ``str | None`` and ``tuple[str, ...]`` all escaped it, and among the
+    escapees were ``index.decompose``, which materialises the whole list
+    of index strings, and ``index.iter_cells``, which is by name the
+    door a descent would use.
+
+    Second, it skipped anything that was a class, and with the class
+    went every method it holds.
+
+    Third, the universe it swept was the set of module names appearing
+    in its own list, so a module missing from the list was invisible to
+    the check whose only job was to find omissions. The universe is now
+    the package, walked with ``pkgutil``.
     """
     import importlib
     import inspect
+    import pkgutil
 
-    for module_name, attribute in INDEX_RENDERING_DOORS:
-        module = importlib.import_module(module_name)
-        assert hasattr(module, attribute), f"{module_name}.{attribute} is gone"
+    def mentions_str(annotation: object) -> bool:
+        if annotation is str:
+            return True
+        return isinstance(annotation, str) and "str" in annotation
 
-    listed = set(INDEX_RENDERING_DOORS)
+    modules = [itacart]
+    for info in pkgutil.walk_packages(itacart.__path__, "itacart."):
+        modules.append(importlib.import_module(info.name))
+
     found: set[tuple[str, str]] = set()
-    for module_name in {name for name, _ in INDEX_RENDERING_DOORS}:
+    for module in modules:
+        module_name = module.__name__
+        for attribute, value in list(vars(module).items()):
+            members: list[tuple[str, object]] = []
+            if isinstance(value, type):
+                if getattr(value, "__module__", None) != module_name:
+                    continue
+                members.extend(
+                    (f"{attribute}.{name}", member)
+                    for name, member in vars(value).items()
+                )
+            elif callable(value) and getattr(value, "__module__", None) == module_name:
+                members.append((attribute, value))
+            for label, member in members:
+                target: object = member
+                if isinstance(member, property):
+                    target = member.fget
+                elif isinstance(member, (staticmethod, classmethod)):
+                    target = member.__func__
+                if not callable(target):
+                    continue
+                try:
+                    hints = inspect.get_annotations(target, eval_str=False)
+                except (TypeError, ValueError):  # pragma: no cover - defensive
+                    continue
+                if mentions_str(hints.get("return")):
+                    found.add((module_name, label))
+    return sorted(found)
+
+
+def _arm_doors(doors: Iterable[tuple[str, str]], patch: pytest.MonkeyPatch) -> None:
+    """Replace every named door with something that fails if it is called."""
+    import importlib
+
+    def detonator(module_name: str, label: str) -> Callable[..., str]:
+        def fired(*args: object, **kwargs: object) -> str:
+            raise AssertionError(f"the count reached {module_name}.{label}")
+
+        return fired
+
+    for module_name, label in doors:
         module = importlib.import_module(module_name)
-        for name, value in vars(module).items():
-            if not callable(value) or isinstance(value, type):
+        if "." in label:
+            class_name, attribute = label.split(".", 1)
+            owner = getattr(module, class_name)
+            if attribute not in vars(owner):  # pragma: no cover - defensive
                 continue
-            if getattr(value, "__module__", None) != module_name:
-                continue
-            try:
-                hints = inspect.get_annotations(value, eval_str=False)
-            except (TypeError, ValueError):  # pragma: no cover - defensive
-                continue
-            if hints.get("return") in ("str", str):
-                found.add((module_name, name))
-    missed = found - listed
-    assert not missed, f"unlisted routes to an index string: {sorted(missed)}"
+            patch.setattr(owner, attribute, detonator(module_name, label))
+        else:
+            patch.setattr(module, label, detonator(module_name, label))
+
+
+def test_the_widening_dropped_no_previous_door() -> None:
+    """Widening the rule may add doors; it may not lose one."""
+    doors = set(_index_rendering_doors())
+    missing = set(_PREVIOUSLY_LISTED_DOORS) - doors
+    assert not missing, sorted(missing)
+
+
+def test_the_door_rule_sees_what_a_bare_str_rule_cannot() -> None:
+    """The rule fails if it narrows back to a bare ``str`` return.
+
+    Each of these escaped the previous rule, and between them they pin
+    all three widenings: the annotation shapes, the module universe, and
+    the sheer size of the result. Twenty was never the number.
+    """
+    doors = set(_index_rendering_doors())
+    for door in (
+        ("itacart.index", "decompose"),
+        ("itacart.index", "iter_cells"),
+        ("itacart.index", "split_components"),
+        ("itacart.hierarchy", "get_children"),
+        ("itacart.hierarchy", "uncompact_cells"),
+        ("itacart.hierarchy", "_descendants_of"),
+        ("itacart.topology", "grid_disk"),
+        ("itacart.topology", "_atoms"),
+        ("itacart.boundary", "child_code"),
+        ("itacart.boundary", "_side_quadrant"),
+    ):
+        assert door in doors, door
+    assert len(doors) >= 100, len(doors)
 
 
 def test_count_never_builds_an_index_fragment(
@@ -618,26 +748,34 @@ def test_count_never_builds_an_index_fragment(
     Patching the descent's own helpers would prove nothing: the property
     is that no *package* route to an index string is reached, and a
     descent that rendered through another module would satisfy a guard
-    aimed at itself. So all thirteen enumerated doors are replaced with
-    detonators at once, and the count has to survive with every one of
-    them armed.
+    aimed at itself.
 
-    Measured with the doors armed: 33,258 cells at resolution 7, none of
-    the doors touched.
+    So every door the rule finds is armed at once, less the three that
+    the count is measured to take and that return a label rather than a
+    cell name. That is 106 detonators against the 20 this test used to
+    arm, and the count has to survive with all of them live.
     """
-    import importlib
-
-    def _detonate(module_name: str, attribute: str):
-        def fired(*args: object, **kwargs: object) -> str:
-            raise AssertionError(f"the count reached {module_name}.{attribute}")
-
-        return fired
-
-    for module_name, attribute in INDEX_RENDERING_DOORS:
-        module = importlib.import_module(module_name)
-        monkeypatch.setattr(module, attribute, _detonate(module_name, attribute))
-
+    doors = [
+        door
+        for door in _index_rendering_doors()
+        if door not in _DOORS_ON_THE_COUNT_PATH
+    ]
+    assert len(doors) >= 100, len(doors)
+    _arm_doors(doors, monkeypatch)
     assert itacart.count_internal_cells(parcel, 7) == 33_258
+
+
+def test_every_exempted_door_is_really_on_the_count_path(parcel: Polygon) -> None:
+    """No exemption is idle: armed alone, each one fires.
+
+    Without this, the exemption list is a place to hide a door that the
+    count should not be taking.
+    """
+    for door in sorted(_DOORS_ON_THE_COUNT_PATH):
+        with pytest.MonkeyPatch.context() as patch:
+            _arm_doors([door], patch)
+            with pytest.raises(AssertionError, match="the count reached"):
+                itacart.count_internal_cells(parcel, 7)
 
 
 def test_count_stack_depth_is_the_resolution_difference(parcel: Polygon) -> None:
@@ -1570,38 +1708,413 @@ def test_children_union_matches_the_parent_only_away_from_the_border() -> None:
     assert hierarchy is not None
 
 
-def test_border_children_vanish_below_a_fixed_area_threshold() -> None:
-    """``get_children`` returns nothing for a border cell from resolution 8.
+def test_border_children_survive_every_refinement() -> None:
+    """``get_children`` refines a border cell down to resolution 13.
 
     ``P-5.2`` asked whether the overlap filter behind the validity gate
-    is redundant. It is not, but what it rejects is not a non-overlap:
-    ``hierarchy._OVERLAP_EPSILON_M2`` is a fixed 1 square metre, while a
-    resolution-9 cell has a nominal area of exactly 1 square metre and
-    everything finer is smaller. The comparison is strict, so a child
-    wholly inside its parent is rejected for being the size it is
-    supposed to be.
+    is redundant. It is not, but the threshold it compared against was a
+    fixed square metre, which is the whole nominal area of a
+    resolution-9 cell and larger than every cell below it. The
+    comparison is strict, so a child wholly inside its parent was
+    rejected for being the size it is supposed to be, and the eastern
+    border of the grid had no refinement below resolution 8 at all. The
+    threshold is now a fraction of the nominal area of the level and
+    shrinks with the cell.
 
-    Measured across twelve rows and every level: zero overlap rejections
-    up to level 8, then 229 at level 9 and 39 at level 10 with none
-    accepted. The F5 measurement saw zero because it went two levels
-    deep.
-
-    This test pins the defect rather than the intended behaviour, and
-    fails the day it is fixed, which is the point. ``hierarchy.py`` is
-    not this phase's to edit.
+    Two assertions, and the second is the guard against overcorrection.
+    Every level has to yield children, and the counts have to keep
+    deviating from the canonical refinement ratio where the geometry
+    says they should: a threshold pushed too far down would admit
+    candidates the parent does not hold and iron that deviation flat.
+    The measured series for row 100, resolutions 1 to 12, is
+    ``2, 21, 4, 24, 4, 23, 4, 25, 4, 25, 4, 24``. Its first seven
+    entries are exactly the ones measured before the fix, and the eighth
+    used to be zero.
     """
     side = itacart.cell_size(1)
     row = 100
     cell = f"NE({itacart.last_lattice_column('NE', row, side):04d}/{row:04d})"
     assert itacart.absorbs_border(cell)
-    counts = {}
+    counts: dict[int, int] = {}
     while itacart.get_resolution(cell) < 13:
         resolution = itacart.get_resolution(cell)
         children = list(itacart.get_children(cell))[0]
         counts[resolution] = len(children)
         absorbing = [k for k in children if itacart.absorbs_border(k)]
-        if not absorbing:
-            break
+        assert absorbing, (resolution, children)
         cell = absorbing[-1]
-    assert counts[8] == 0, counts
-    assert all(counts[r] > 0 for r in counts if r < 8), counts
+    assert sorted(counts) == list(range(1, 13)), counts
+    assert [counts[r] for r in sorted(counts)] == [
+        2,
+        21,
+        4,
+        24,
+        4,
+        23,
+        4,
+        25,
+        4,
+        25,
+        4,
+        24,
+    ], counts
+    assert all(count > 0 for count in counts.values()), counts
+    deviating = [r for r in counts if counts[r] != itacart.refinement_ratio(r + 1)]
+    assert deviating, counts
+
+
+# --------------------------------------------------------------------------
+# Filling inside an extension zone
+# --------------------------------------------------------------------------
+
+
+_ZONE_FOOTPRINTS: tuple[tuple[str, float, float], ...] = (
+    ("Fiji, southern hemisphere", -18.0, -17.8),
+    ("Chukotka, northern hemisphere", 65.0, 65.2),
+)
+"""One latitude band inside each extension zone, as ``(name, low, high)``.
+
+Fiji is realised on resolution-1 rows 171 to 237 and reaches 182 degrees;
+Chukotka on rows 709 to 799, reaching 190.5. Both bands sit well inside
+their zone, so a footprint written past 180 there is inside the domain
+and has to fill rather than be refused.
+"""
+
+
+@pytest.mark.parametrize("name, low, high", _ZONE_FOOTPRINTS)
+def test_a_footprint_astride_the_antemeridian_fills_inside_a_zone(
+    name: str, low: float, high: float
+) -> None:
+    """The positive case criterion 9 of the previous phase never had.
+
+    A ring written from 179.9 to 180.3 lies on one side of the line
+    already, so it does not cross: inside an extension zone the domain
+    reaches past 180 and the whole footprint is addressable. It used to
+    raise a bare ``GEOSException`` from the geometry engine instead,
+    because densification normalised its interior vertices to
+    ``(-180, 180]`` and folded the ring back across the globe.
+    """
+    footprint = Polygon([(179.9, low), (180.3, low), (180.3, high), (179.9, high)])
+    assert not itacart.crosses_antemeridian(footprint)
+    cells = itacart.decompose(itacart.polyfill(footprint, 3))
+    assert cells, name
+    assert all(itacart.get_resolution(cell) == 3 for cell in cells)
+
+
+@pytest.mark.parametrize("name, low, high", _ZONE_FOOTPRINTS)
+def test_a_footprint_wholly_past_180_fills_inside_a_zone(
+    name: str, low: float, high: float
+) -> None:
+    """Written entirely past the line, and still inside the domain.
+
+    The strict reading of the antemeridian test takes the longitude
+    literally, so this footprint does not cross either. It broke for the
+    same reason and is fixed by the same change.
+    """
+    footprint = Polygon([(180.2, low), (180.4, low), (180.4, high), (180.2, high)])
+    assert not itacart.crosses_antemeridian(footprint)
+    assert itacart.decompose(itacart.polyfill(footprint, 3)), name
+
+
+@pytest.mark.parametrize("name, low, high", _ZONE_FOOTPRINTS)
+def test_the_wrapped_spelling_of_the_same_footprint_is_still_refused(
+    name: str, low: float, high: float
+) -> None:
+    """The other direction of travel, which is a crossing and stays one.
+
+    Spelled with a jump from 179.9 to -179.7 the ring does cross, and the
+    refusal is the package's own exception. Filling one spelling must not
+    quietly start filling the other: they describe different rings.
+    """
+    wrapped = Polygon([(179.9, low), (-179.7, low), (-179.7, high), (179.9, high)])
+    assert itacart.crosses_antemeridian(wrapped)
+    with pytest.raises(AntemeridianError):
+        itacart.polyfill(wrapped, 3)
+
+
+def test_a_footprint_past_180_outside_every_zone_is_refused_by_name() -> None:
+    """Outside a zone the domain stops at the line, and so does the fill.
+
+    What matters here is not that it is refused but that the refusal is
+    the package's, not the geometry engine's. A raw ``GEOSException``
+    tells the caller nothing they can act on.
+    """
+    footprint = Polygon([(179.9, 5.0), (180.3, 5.0), (180.3, 5.2), (179.9, 5.2)])
+    assert not itacart.crosses_antemeridian(footprint)
+    with pytest.raises(NonExistentCellError):
+        itacart.polyfill(footprint, 3)
+
+
+def test_densification_keeps_the_longitude_branch_it_was_given() -> None:
+    """The mechanism behind the four tests above, isolated.
+
+    ``direct_geodesic`` normalises to ``(-180, 180]``, which is correct
+    for the question it answers and wrong for densification: the
+    interior vertices of a segment crossing the line came back on the
+    other branch and the ring self-intersected. Measured on the ring
+    itself rather than through the fill, so that a future change to the
+    fill cannot hide a regression here.
+    """
+    ring = Polygon([(179.9, -18.0), (180.3, -18.0), (180.3, -17.8), (179.9, -17.8)])
+    dense = itacart.densify_orthodromic(ring, 1000.0)
+    longitudes = [point[0] for point in dense.exterior.coords]
+    assert min(longitudes) > 179.0, min(longitudes)
+    assert max(longitudes) <= 180.3 + 1e-9, max(longitudes)
+    assert dense.is_valid
+
+
+# --------------------------------------------------------------------------
+# The radius of the boundary screen
+# --------------------------------------------------------------------------
+
+
+def _parcel_east_of_greenwich(degrees: float, metres: float = 60.0) -> Polygon:
+    """A small square parcel that many degrees east of the prime meridian."""
+    side = metres / 111_319.0
+    lat = 51.4776
+    return Polygon(
+        [
+            (degrees, lat),
+            (degrees + side, lat),
+            (degrees + side, lat + side),
+            (degrees, lat + side),
+        ]
+    )
+
+
+def test_the_screen_refuses_at_the_resolution_that_was_asked_for() -> None:
+    """A parcel beside the meridian is not refused for its neighbour's sake.
+
+    The screen used to run at resolution 1, so it refused a band up to
+    ten kilometres wide -- the whole base cell -- to protect against a
+    family one cell wide. At resolution 7 that is a thousand times too
+    much, and at resolution 13 a million times.
+
+    The band now scales with the target, so the same parcel is refused
+    at a coarse resolution and filled at a fine one. Nothing about
+    ``D-7.3`` changes: the meridian cells are refused either way.
+    """
+    parcel = _parcel_east_of_greenwich(0.01)
+    with pytest.raises(NonExistentCellError):
+        itacart.polyfill(parcel, 3)
+    cells = itacart.decompose(itacart.polyfill(parcel, 7))
+    assert cells
+    assert all(itacart.get_resolution(cell) == 7 for cell in cells)
+
+
+def test_what_is_filled_beside_the_meridian_is_ordinary_and_nominal() -> None:
+    """The cells the narrower screen lets through are real cells.
+
+    Inside an anomalous base cell the index descent and the square
+    descent are not the same tree, so admitting geometry there is only
+    safe if the indices the fill emits name the squares it accepted.
+    Measured on the round trip rather than assumed.
+    """
+    parcel = _parcel_east_of_greenwich(0.001)
+    cells = itacart.decompose(itacart.polyfill(parcel, 7))
+    assert cells
+    nominal = itacart.nominal_cell_area(7)
+    for cell in cells:
+        assert itacart.is_valid_index(cell), cell
+        assert not itacart.absorbs_border(cell), cell
+        assert itacart.cell_shape(cell) == "parallelogram", cell
+        area = Polygon(boundary.plane_ring(cell)[1]).area
+        assert area == pytest.approx(nominal, rel=1e-9), cell
+        assert itacart.cell_to_polygon(cell).intersects(parcel), cell
+
+
+def test_the_three_families_are_still_refused_when_actually_touched() -> None:
+    """Narrowing the radius must not narrow the refusal itself.
+
+    ``D-7.3`` is untouched by the change of radius: geometry that reaches
+    a cell of one of the three families is refused exactly as before.
+    """
+    with pytest.raises(NonExistentCellError):
+        itacart.polyfill(_parcel_east_of_greenwich(0.0), 13)
+    side = itacart.cell_size(1)
+    for quadrant in QUADRANTS:
+        polar = max(
+            row
+            for row in range(700, 1000)
+            if itacart.last_lattice_column(quadrant, row, side) > 0
+        )
+        for column, row in (
+            (0, 100),
+            (itacart.last_lattice_column(quadrant, 100, side), 100),
+            (1, polar),
+        ):
+            with pytest.raises((NonExistentCellError, DomainError)):
+                geometry._check_addressable(quadrant, column, row)
+
+
+def test_the_geometric_screen_never_admits_an_anomalous_cell() -> None:
+    """The screen is validated against the index side, by enumeration.
+
+    The fill may not name a cell, so the screen cannot ask
+    ``absorbs_border``. It uses the lattice column of the node instead,
+    ``(u0 - v0) / side``, which reduces to ``u_index - row`` at
+    resolution 1. This walks four quadrants, the three families and the
+    ordinary interior, and requires the geometric answer never to be
+    more permissive than the index one.
+
+    Divergences do exist and are all in the safe direction. Inside the
+    meridian family they sit at a negative column -- west of the line,
+    outside the quadrant, unreachable because the quadrant clip leaves
+    ``u - v`` positive -- and that much is asserted. Inside the
+    border-absorbing family they sit at positive columns, because
+    absorption gives the parent more children than the square
+    subdivision has and the two trees are not the same tree there. Only
+    conservativeness is claimed for that family; equivalence is not.
+    """
+    side = itacart.cell_size(1)
+    checked = 0
+    for quadrant in QUADRANTS:
+        for row in (0, 100, 451):
+            last = itacart.last_lattice_column(quadrant, row, side)
+            for column in (0, 1, last - 1, last):
+                stack = [
+                    (
+                        f"{quadrant}({column:04d}/{row:04d})",
+                        (column + row) * side,
+                        row * side,
+                        side,
+                        1,
+                    )
+                ]
+                while stack:
+                    cell, u0, v0, cell_side, level = stack.pop()
+                    lattice_column = round((u0 - v0) / cell_side)
+                    lattice_row = round(v0 / cell_side)
+                    last_here = itacart.last_lattice_column(
+                        quadrant, lattice_row, cell_side
+                    )
+                    beyond = itacart.last_lattice_column(
+                        quadrant, lattice_row + 1, cell_side
+                    )
+                    try:
+                        itacart.absorbs_border(cell)
+                        anomalous = (
+                            itacart.absorbs_border(cell)
+                            or itacart.cell_shape(cell) != "parallelogram"
+                        )
+                    except Exception:  # pragma: no cover - defensive
+                        anomalous = True
+                    refused = (
+                        lattice_column <= 0
+                        or last_here <= 0
+                        or beyond <= 0
+                        or lattice_column >= last_here
+                    )
+                    checked += 1
+                    if anomalous and not refused:
+                        raise AssertionError(f"screen admits {cell}")
+                    if refused and not anomalous and column == 0:
+                        assert lattice_column < 0, cell
+                    if level >= 3:
+                        continue
+                    step = level + 1
+                    divisor = itacart.linear_refinement_ratio(step)
+                    child = cell_side / divisor
+                    for r in range(divisor):
+                        for c in range(divisor):
+                            stack.append(
+                                (
+                                    hierarchy._descend(
+                                        cell, geometry._child_code(r, c, step)
+                                    ),
+                                    u0 + c * child,
+                                    v0 + r * child,
+                                    child,
+                                    step,
+                                )
+                            )
+    assert checked > 5_000, checked
+
+
+def test_the_band_of_a_polar_base_cell_is_the_whole_cell() -> None:
+    """At the pole the anomaly is not a strip, and the band says so.
+
+    ``_anomalous_band`` draws the three families as bands one cell side
+    wide, which is the point of narrowing the screen. The polar family
+    is the one case where that narrowing buys nothing: every target row
+    in the last base row of a quadrant is clipped by the pole, so the
+    band covers the base cell entirely and the screen refuses exactly
+    what it refused before.
+
+    Two rows and three resolutions, because the branch that detects the
+    polar reach differs between them. Row 999 is the last row that
+    addresses a cell at resolution 1; row 1000 is straddled by the pole,
+    so it addresses none, and its topmost target rows lie beyond the
+    meridian quadrant.
+    """
+    base = itacart.cell_size(1)
+    for row in (999, 1000):
+        for resolution in (1, 3, 5):
+            band = geometry._anomalous_band("NE", 1, row, itacart.cell_size(resolution))
+            assert not band.is_empty, (row, resolution)
+            if row == 1000:
+                assert band.area == pytest.approx(base * base, rel=1e-9), (
+                    row,
+                    resolution,
+                )
+            else:
+                assert band.area > 0.7 * base * base, (row, resolution)
+
+
+def test_the_polar_reach_is_found_by_search_when_it_starts_mid_cell() -> None:
+    """The pole can fall inside a base cell, not only below it.
+
+    Row 1000 at resolution 5 is the case: its lowest target rows still
+    address cells, its highest do not, and the first row that does not
+    has to be located rather than assumed. A linear walk would visit up
+    to a million rows at resolution 13, so it is a search, and the
+    search is what this covers.
+    """
+    base = itacart.cell_size(1)
+    side = itacart.cell_size(5)
+    lowest = int(math.floor(1000 * base / side))
+    highest = int(math.floor((1000 * base + base - side / 2.0) / side))
+    assert itacart.last_lattice_column("NE", lowest + 1, side) > 0
+    assert itacart.last_lattice_column("NE", highest + 1, side) <= 0
+    crossings = [
+        row
+        for row in range(lowest, highest + 1)
+        if (itacart.last_lattice_column("NE", row + 1, side) <= 0)
+        != (itacart.last_lattice_column("NE", row, side) <= 0)
+    ]
+    assert len(crossings) == 1, crossings
+    band = geometry._anomalous_band("NE", 1, 1000, side)
+    assert band.area == pytest.approx(base * base, rel=1e-9)
+
+
+def test_the_polar_row_narrows_with_the_target_like_the_others() -> None:
+    """The polar family narrows too, and the first version of this lied.
+
+    It asserted that a parcel in the last base row is refused at every
+    resolution, on the reasoning that the pole clips the whole row. That
+    is true of base row 1000, which the pole straddles, and false of row
+    999: most of its target rows address cells perfectly well, and only
+    the topmost do not. The screen refuses the top and admits the rest,
+    which is the whole intent of measuring the band at the target side.
+
+    So the assertion is the one that survives measurement. Base row 999
+    is refused entirely at resolution 1, because at that side the row is
+    the polar row and holds one cell. Below that side the band shrinks,
+    and it never grows back.
+    """
+    base = itacart.cell_size(1)
+    whole = base * base
+    assert geometry._anomalous_band("NE", 1, 999, base).area == pytest.approx(
+        whole, rel=1e-9
+    )
+    areas = [
+        geometry._anomalous_band("NE", 1, 999, itacart.cell_size(r)).area
+        for r in (1, 3, 5, 7)
+    ]
+    assert areas[0] == pytest.approx(whole, rel=1e-9)
+    assert all(area < whole for area in areas[1:]), areas
+    assert max(areas[1:]) < 0.9 * whole, areas
+    for row in (999, 1000):
+        for resolution in (1, 3, 5):
+            band = geometry._anomalous_band("NE", 1, row, itacart.cell_size(resolution))
+            assert not band.is_empty, (row, resolution)

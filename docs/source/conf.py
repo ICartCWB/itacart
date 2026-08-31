@@ -128,8 +128,8 @@ myst_heading_anchors = 3
 
 html_theme = "furo"
 html_title = f"itacart {release}"
-# O orientador recomenda maximizar graficos e imagens: figuras do artigo
-# ficam em docs/_static e sao referenciadas nas paginas de conceito.
+# Charts and images are maximised on purpose: the figures of the paper live
+# in docs/_static and are referenced from the concept pages.
 #
 # Two entries, on purpose. "../_static" is the repository's own directory and
 # is kept so that any page already pointing at _static/f1/... keeps resolving.

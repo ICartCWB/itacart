@@ -1,4 +1,4 @@
 resolutions
 ===========
 
-.. TODO: prosa + figuras do artigo (docs/_static).
+.. TODO: prose + figures from the paper (docs/_static).

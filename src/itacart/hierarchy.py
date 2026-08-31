@@ -70,13 +70,28 @@ __all__ = [
 _DESCENT_OPEN = "("
 _DESCENT_CLOSE = ")"
 
-_OVERLAP_EPSILON_M2 = 1.0
-"""Area below which a candidate child is taken to touch its parent only.
+_OVERLAP_EPSILON_RATIO = 1e-6
+"""Fraction of a child's nominal area below which overlap is only contact.
 
 Border children are selected by intersecting plane rings, and two cells
-that merely share an edge intersect in a sliver of rounding noise. One
-square metre is orders of magnitude below the smallest cell of the grid
-and comfortably above that noise.
+that merely share an edge intersect in a sliver of rounding noise. The
+threshold has to sit above that sliver and below the smallest genuine
+overlap. Both of those scale with the cell, so the threshold scales with
+it too, and the constant is a ratio rather than an area.
+
+Measured, not assumed. The sliver between lexical neighbours is exactly
+zero up to level 11 and at most 2.33e-9 of the nominal area at levels 12
+and 13. The smallest genuine overlap, enumerated over all 4000
+border-absorbing cells of resolution 1 and over 60 chains carried down
+to resolution 13, is 2.05e-2 of the nominal area. This ratio sits 430
+times above the first and 20500 times below the second, close to the
+geometric mean of the two.
+
+A fixed area cannot do this job. One square metre, which is what stood
+here, is the entire nominal area of a resolution-9 cell and is larger
+than every cell below it, so a child wholly inside its parent was
+rejected for being the size it is supposed to be and the eastern border
+of the grid had no refinement at all below resolution 8.
 """
 
 
@@ -319,8 +334,10 @@ def _border_children_of(cell: str, level: int) -> list[str]:
     from shapely.geometry import Polygon
 
     from . import boundary
+    from .resolutions import cell_size
 
     body = Polygon(boundary.plane_ring(cell)[1])
+    epsilon = _OVERLAP_EPSILON_RATIO * cell_size(level) ** 2
     children: list[str] = []
     for step in (0, 1):
         stem = _shift_column(cell, step)
@@ -334,7 +351,7 @@ def _border_children_of(cell: str, level: int) -> list[str]:
                     f"the refinement ring of {candidate!r} is self-intersecting, "
                     f"so the children of {cell!r} cannot be selected by overlap"
                 )
-            if outline.intersection(body).area > _OVERLAP_EPSILON_M2:
+            if outline.intersection(body).area > epsilon:
                 children.append(candidate)
     return children
 

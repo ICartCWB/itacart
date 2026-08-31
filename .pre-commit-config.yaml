@@ -1,20 +1,20 @@
-# Portao de qualidade local, espelhando o job de lint do CI.
-# Disciplina: 00_README_Orientacao.md, "Disciplina de codigo".
+# Local quality gate, mirroring the lint job of the CI workflow.
+# Discipline: CONTRIBUTING.md, "Code discipline".
 #
-# Instalacao:
+# Installation:
 #     pip install pre-commit
-#     pre-commit autoupdate      # fixa as versoes correntes
+#     pre-commit autoupdate      # pin the current releases
 #     pre-commit install
-#     pre-commit run --all-files # primeira passada, formata o que faltar
+#     pre-commit run --all-files # first pass, formats whatever is pending
 #
-# As versoes abaixo sao um ponto de partida. Rode `pre-commit autoupdate`
-# antes do primeiro uso para que elas reflitam o que esta publicado hoje.
+# The revisions below are a starting point. Run `pre-commit autoupdate`
+# before first use so that they reflect what is published today.
 
 default_language_version:
   python: python3.11
 
 repos:
-  # -- Higiene basica de arquivo -------------------------------------------
+  # -- Basic file hygiene ---------------------------------------------------
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
@@ -29,7 +29,7 @@ repos:
         args: [--maxkb=2048]
       - id: debug-statements
 
-  # -- Formatacao -----------------------------------------------------------
+  # -- Formatting -----------------------------------------------------------
   - repo: https://github.com/psf/black
     rev: 26.5.1
     hooks:
@@ -41,17 +41,18 @@ repos:
       - id: isort
 
   # -- Lint -----------------------------------------------------------------
-  # Se o repositorio ja tiver .flake8 ou setup.cfg com [flake8], APAGUE o
-  # bloco `args` abaixo: duas fontes de configuracao divergem em silencio.
+  # If the repository ever gains a .flake8 or a setup.cfg with [flake8],
+  # DELETE the `args` block below: two sources of configuration drift apart
+  # in silence.
   - repo: https://github.com/PyCQA/flake8
     rev: 7.3.0
     hooks:
       - id: flake8
         args: ["--max-line-length=88", "--extend-ignore=E203,W503"]
 
-  # -- Tipos ----------------------------------------------------------------
-  # Espelha `mypy src` do criterio 2. Restrito a src/ de proposito: os testes
-  # sao verificados a parte, e nao devem bloquear commit de codigo.
+  # -- Types ----------------------------------------------------------------
+  # Mirrors `mypy src`. Restricted to src/ on purpose: the tests are checked
+  # separately and should not block a commit of source code.
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v2.3.1
     hooks:
@@ -61,9 +62,9 @@ repos:
         additional_dependencies:
           - shapely>=2.0
 
-  # -- Testes ---------------------------------------------------------------
-  # A suite da F0 roda em menos de um segundo. Se ficar lenta em fases
-  # adiantadas, mova para `stages: [pre-push]` ou remova este bloco.
+  # -- Tests ----------------------------------------------------------------
+  # This ran in under a second when it was written. If it grows slow, move it
+  # to `stages: [pre-push]` or drop this block.
   - repo: local
     hooks:
       - id: pytest-unit

@@ -55,7 +55,7 @@ def liberty_statue() -> tuple[float, float]:
 
 @pytest.fixture
 def praca_da_se() -> tuple[float, float]:
-    """(lon, lat) of Praca da Se, Sao Paulo."""
+    """(lon, lat) of Praça da Sé, São Paulo."""
     return (-46.6328862, -23.5508962)
 
 
