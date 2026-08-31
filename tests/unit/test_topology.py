@@ -128,7 +128,8 @@ def test_step_arithmetic_is_identical_in_every_quadrant(quadrant: str) -> None:
     origin = f"{quadrant}(0500/0300)"
     for direction, (shift_x, shift_y) in topology.LATTICE_STEP.items():
         expected = f"{quadrant}({500 + shift_x:04d}/{300 + shift_y:04d})"
-        assert topology.get_neighbor(origin, direction) == expected
+        compass = topology._lattice_direction(quadrant, direction)
+        assert topology.get_neighbor(origin, compass) == expected
 
 
 @pytest.mark.slow
@@ -217,7 +218,7 @@ def test_crossing_the_prime_meridian_from_the_eastern_triangle() -> None:
 
 def test_crossing_the_prime_meridian_into_the_eastern_triangle() -> None:
     """Western quadrants have no column zero, so the step lands in the east."""
-    assert topology.get_neighbor("NW(0001/0300)", "W") == "NE(0000/0300)"
+    assert topology.get_neighbor("NW(0001/0300)", "E") == "NE(0000/0300)"
     assert share_an_edge("NW(0001/0300)", "NE(0000/0300)")
 
 
@@ -239,26 +240,33 @@ def test_the_meridian_triangle_keeps_its_equatorward_step() -> None:
 
 
 @pytest.mark.parametrize(
-    ("origin", "expected"),
+    ("origin", "compass", "expected"),
     [
-        ("NE(0500/0000)", "SE(0500/0000)"),
-        ("SE(0500/0000)", "NE(0500/0000)"),
-        ("NW(0500/0000)", "SW(0500/0000)"),
-        ("SW(0500/0000)", "NW(0500/0000)"),
+        ("NE(0500/0000)", "S", "SE(0500/0000)"),
+        ("SE(0500/0000)", "N", "NE(0500/0000)"),
+        ("NW(0500/0000)", "S", "SW(0500/0000)"),
+        ("SW(0500/0000)", "N", "NW(0500/0000)"),
     ],
 )
-def test_crossing_the_equator_keeps_the_column(origin: str, expected: str) -> None:
+def test_crossing_the_equator_keeps_the_column(
+    origin: str, compass: str, expected: str
+) -> None:
     """The hemispheres meet column to column; the shear does not carry across."""
-    assert topology.get_neighbor(origin, "S") == expected
+    assert topology.get_neighbor(origin, compass) == expected
     assert share_an_edge(origin, expected)
 
 
-@pytest.mark.parametrize("quadrant", ["NE", "NW", "SE", "SW"])
-def test_the_polar_cell_is_reached_from_either_quadrant(quadrant: str) -> None:
+@pytest.mark.parametrize(
+    ("quadrant", "compass"),
+    [("NE", "N"), ("NW", "N"), ("SE", "S"), ("SW", "S")],
+)
+def test_the_polar_cell_is_reached_from_either_quadrant(
+    quadrant: str, compass: str
+) -> None:
     """One polar cell per hemisphere, in the eastern quadrant, spanning 360."""
     origin = f"{quadrant}(0001/0999)"
     expected = f"{quadrant[0]}E(0000/1000)"
-    assert topology.get_neighbor(origin, "N") == expected
+    assert topology.get_neighbor(origin, compass) == expected
     assert share_an_edge(origin, expected)
 
 
@@ -267,7 +275,7 @@ def test_the_antemeridian_seam_outside_an_extension_zone() -> None:
     east = f"NE({last_column('NE', row):04d}/{row:04d})"
     west = f"NW({last_column('NW', row):04d}/{row:04d})"
     assert topology.get_neighbor(east, "E") == west
-    assert topology.get_neighbor(west, "E") == east
+    assert topology.get_neighbor(west, "W") == east
     assert share_an_edge(east, west)
 
 
@@ -278,7 +286,7 @@ def test_the_antemeridian_seam_inside_an_extension_zone() -> None:
     west = f"NW({last_column('NW', row):04d}/{row:04d})"
     assert (east, west) == ("NE(0933/0709)", "NW(0830/0709)")
     assert topology.get_neighbor(east, "E") == west
-    assert topology.get_neighbor(west, "E") == east
+    assert topology.get_neighbor(west, "W") == east
     assert share_an_edge(east, west)
 
 
@@ -915,8 +923,13 @@ def test_an_exceptional_ancestor_is_found_through_the_chain() -> None:
     assert share_an_edge(cell, neighbour)
 
 
-@pytest.mark.parametrize("quadrant", ["NE", "NW", "SE", "SW"])
-def test_normalising_past_the_last_row_gives_the_polar_cell(quadrant: str) -> None:
+@pytest.mark.parametrize(
+    ("quadrant", "compass"),
+    [("NE", "N"), ("NW", "N"), ("SE", "S"), ("SW", "S")],
+)
+def test_normalising_past_the_last_row_gives_the_polar_cell(
+    quadrant: str, compass: str
+) -> None:
     """Reached by ``deflect`` alone.
 
     ``get_neighbor`` never gets here: the cells of row 999 absorb the border,
@@ -924,7 +937,7 @@ def test_normalising_past_the_last_row_gives_the_polar_cell(quadrant: str) -> No
     normalisation still has to be right, because it is the public function.
     """
     expected = f"{quadrant[0]}E(0000/1000)"
-    assert topology.deflect(f"{quadrant}(0001/0999)", "N") == expected
+    assert topology.deflect(f"{quadrant}(0001/0999)", compass) == expected
     assert topology._eastern(quadrant) == f"{quadrant[0]}E"
 
 
@@ -1157,24 +1170,27 @@ def test_the_poleward_step_composes_while_it_stays_inside_the_row_above() -> Non
 
 
 @pytest.mark.slow
-def test_a_directed_step_is_not_symmetric_at_the_boundary() -> None:
-    """Declared, because composing steps is a reasonable thing to want to do.
+def test_a_directed_step_is_not_an_involution_where_rows_change_length() -> None:
+    """``get_neighbor`` selects a direction; it does not promise to invert.
 
-    Adjacency is symmetric and the disks are symmetric. A *named direction* is
-    not, and two separate mechanisms break it.
+    The contract, stated: the compass label is true, and the step back
+    from the answer may land one column off the origin wherever the last
+    column of a row shifts between rows. Enumerated over the four border
+    families -- every cell of each, four quadrants, 102,090 cardinal
+    pairs -- 6,338 such cases, and all 6,338 classified into one class:
+    the answer touches the origin, the origin is among the answer's
+    neighbours, and the label the geometry gives it on the way back is
+    not the opposite of the one that got there. None is a step that
+    missed and none is the tie-break choosing differently.
 
-    The first is mirroring. Direction labels are read in the origin's own
-    quadrant, so ``E`` means away from the prime meridian on both sides of it.
-    Stepping west off the meridian triangle lands in the western quadrant, and
-    stepping east from there goes further west still, not back. The opposite
-    label is simply not the inverse of a step that changes quadrant.
+    Geometric adjacency stays symmetric, and that is the invariant to
+    compose on, so it is asserted on every cardinal case below.
 
-    The second is the tie-break. Where a side carries several cells the step
-    names the one sharing the longest boundary; that cell is ordinary, has
-    four directions, and spends them where its own lattice says.
-
-    Every pair below is genuinely adjacent, which is what makes this a
-    statement about directions and not about the tessellation.
+    One mechanism that used to live here is gone. Quadrant mirroring
+    made a westward step out of ``NE`` unable to come back, because the
+    label ``"E"`` meant *away from the meridian* and pointed west in
+    ``NW``. Labels are true compass points now and that pair is
+    reciprocal again, which the first named case pins.
     """
     opposite = {
         "N": "S",
@@ -1223,14 +1239,15 @@ def test_a_directed_step_is_not_symmetric_at_the_boundary() -> None:
             if direction in ("N", "S", "E", "W"):
                 assert topology.are_neighbor_cells(cell, neighbour)
 
-    assert crossing > 0, "mirroring should break the inverse across a quadrant"
-    assert inside > 0, "the tie-break should break it inside one"
+    assert inside > 0, "row length should break the inverse inside a quadrant"
+    assert crossing > 0, "and across one, where a row ends at a different column"
 
-    # The two named cases, so the mechanisms are pinned and not just counted.
+    # Reciprocal again: this was the mirroring case, and mirroring is gone.
     assert topology.get_neighbor("NE(0000/0708)", "W") == "NW(0001/0708)"
-    assert topology.get_neighbor("NW(0001/0708)", "E") == "NW(0002/0708)"
+    assert topology.get_neighbor("NW(0001/0708)", "E") == "NE(0000/0708)"
     assert topology.are_neighbor_cells("NE(0000/0708)", "NW(0001/0708)")
 
+    # Still not reciprocal, and this is the mechanism that remains.
     assert topology.get_neighbor("NE(0932/0709)", "N") == "NE(0930/0710)"
     assert topology.get_neighbor("NE(0930/0710)", "S") == "NE(0931/0709)"
     assert topology.are_neighbor_cells("NE(0932/0709)", "NE(0930/0710)")

@@ -144,30 +144,46 @@ def test_figure_7a_is_reproduced_as_a_string() -> None:
 
 
 def test_geometric_compaction_is_weaker_than_lexical_compaction() -> None:
-    """``compact=True`` compacts less than ``compact_cells`` does.
+    """``compact=True`` collapses less than ``compact_cells`` does.
 
-    The fill compacts a node when the plane square is contained in the
-    projected geometry, which is a geometric test and sensitive to the
-    geodetic round trip that built the footprint. ``compact_cells`` asks
-    a lexical question -- are all the children present -- and answers yes
-    where the geometric test answers no. Measured on Figure 7(a): the
-    published index and the lexical compaction both hold 114 cells, the
-    geometric one holds 138, and they differ at exactly one node.
+    The fill collapses a node when its plane square is contained in the
+    projected geometry. ``compact_cells`` asks whether all the children
+    are present, and the leaf predicate is the centre, so it answers yes
+    where the containment test answers no. The ground covered is the
+    same either way; which of the two ``compact=True`` should mean is an
+    open contract question and not something this test settles.
 
-    The ground covered is the same. This pins the divergence rather than
-    hiding it; which of the two ``compact=True`` should mean is an open
-    question for the bridge, not something this test settles.
+    Measured on a parcel rather than on Figure 7(a). The figure diverged
+    at exactly one node, and the part of that node lying outside the
+    geometry was 9.3e-09 square metres -- a sliver two ten-billionths of
+    a metre wide, below the ulp of the plane coordinates. A test built
+    on it was pinning floating-point noise, and it broke when an
+    unrelated change perturbed the descent. What is pinned here instead
+    survives refining the densification by four orders of magnitude:
+    the excess stays at 495 square metres over 24 nodes, between 2.1e-02
+    and 59 square metres each, none of them near the noise floor.
     """
-    from shapely.ops import unary_union
-
-    cells = itacart.decompose(FIGURE_7A)
-    footprint = unary_union([itacart.cell_to_polygon(cell) for cell in cells])
-    geometric = itacart.polyfill(footprint, 7, compact=True)
-    lexical = itacart.compact_cells(itacart.polyfill(footprint, 7))
-    assert itacart.count_cells(lexical) < itacart.count_cells(geometric)
-    assert set(itacart.uncompact_cells(geometric, 7)) == set(
-        itacart.uncompact_cells(lexical, 7)
+    parcel = Polygon(
+        [
+            (-73.9812, 40.7681),
+            (-73.9581, 40.8005),
+            (-73.9497, 40.7968),
+            (-73.9730, 40.7644),
+        ]
     )
+    plain = itacart.polyfill(parcel, 7)
+    geometric = itacart.polyfill(parcel, 7, compact=True)
+    lexical = itacart.compact_cells(plain)
+
+    assert itacart.count_cells(lexical) < itacart.count_cells(geometric)
+    assert set(itacart.uncompact_cells(geometric, 7)) == set(itacart.decompose(plain))
+    assert set(itacart.uncompact_cells(lexical, 7)) == set(itacart.decompose(plain))
+
+    divergent = set(itacart.decompose(lexical)) - set(itacart.decompose(geometric))
+    assert divergent
+    leaves = set(itacart.decompose(plain))
+    for node in divergent:
+        assert set(itacart.uncompact_cells(node, 7)) <= leaves, node
 
 
 def test_figure_7a_lies_in_the_nw_quadrant() -> None:
