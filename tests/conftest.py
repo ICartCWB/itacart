@@ -75,13 +75,19 @@ def central_park_index() -> str:
 
 @pytest.fixture
 def sydney_cell() -> str:
-    """Atomic index for the Sydney Opera House, resolution 9."""
+    """Atomic index for the Sydney Opera House, resolution 7.
+
+    The string is what ``geo_to_cell`` returns for the opera house at
+    resolution 7, and ``test_index.py`` has pinned it as a seven-level
+    path since F2. The docstring said nine, which is the discrepancy
+    ``test_fixture_invariants.py`` now forbids for every cell fixture.
+    """
     return "SE(1400/0374(3(C2(3(C2(4(C1)))))))"
 
 
 @pytest.fixture
 def paper_example_index() -> str:
-    """The index string used as an example in section 3.1 of the paper."""
+    """Example index from section 3.1 of the paper, resolution 4."""
     return "SE(1400/0374(3(C2(3))))"
 
 

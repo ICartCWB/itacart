@@ -25,8 +25,6 @@ aligned with :func:`itacart.index.decompose` order.
 
 from __future__ import annotations
 
-from typing import cast
-
 __version__ = "0.1.0a4"
 __paper_doi__ = "10.14393/rbcv77n0a-79281"
 
@@ -232,9 +230,43 @@ def latlng_to_cell(lat: float, lng: float, resolution: int) -> str:
 
 
 def cell_to_latlng(cell: str) -> tuple[float, float]:
-    """H3-style alias of :func:`cell_to_centroid` returning ``(lat, lng)``."""
-    lon, lat = cast("tuple[float, float]", cell_to_centroid(cell))
-    return (lat, lon)
+    """H3-style alias of :func:`cell_to_centroid` returning ``(lat, lng)``.
+
+    Takes one cell and returns one point, which is the H3 contract this
+    alias exists to offer. A compositional index naming more than one
+    cell is refused rather than answered, because there is no single
+    point to give and the alias would have to break its own signature to
+    say so. Use :func:`cell_to_centroid`, which returns a list for a
+    composed index.
+
+    The question asked is ``is_atomic``, not the type of what
+    :func:`cell_to_centroid` happens to return. The two agree today,
+    since that function switches on the same predicate, but keying on the
+    container type would make this guard depend on a decision belonging
+    to another module, and it would fail open rather than closed if that
+    decision ever changed.
+
+    The refusal replaces a silent wrong answer. The previous
+    implementation cast the result to a pair and unpacked it: for an
+    index naming exactly two cells that cast was a lie the interpreter
+    could not catch, and the call returned a pair of coordinate *pairs*,
+    swapped, with no error. For three or more it raised an unpacking
+    error that named nothing useful. Measured on
+    ``SW(0476/0260(4(A2(4(A4(1(E5)),A3(2(E1)))))))``, which returned
+    ``((-46.6319..., -23.5508...), (-46.6328..., -23.5508...))``.
+
+    Raises:
+        InvalidIndexError: If ``cell`` names more than one cell.
+    """
+    if not is_atomic(cell):
+        raise InvalidIndexError(
+            f"{cell!r} names {count_cells(cell)} cells; cell_to_latlng "
+            "returns a single (lat, lng) pair. Use cell_to_centroid for a "
+            "composed index"
+        )
+    centroid = cell_to_centroid(cell)
+    assert isinstance(centroid, tuple)  # is_atomic already established this
+    return (centroid[1], centroid[0])
 
 
 cell_to_parent = get_parent

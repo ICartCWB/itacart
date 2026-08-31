@@ -19,6 +19,7 @@ from types import ModuleType
 import pytest
 
 import itacart
+from itacart.exceptions import InvalidIndexError
 
 #: Submodules that declare a public contract. Named rather than
 #: discovered, so that a new module cannot join the package and escape
@@ -147,3 +148,42 @@ class TestH3Aliases:
 
     def test_cell_to_parent_is_get_parent(self) -> None:
         assert itacart.cell_to_parent is itacart.get_parent
+
+
+def test_cell_to_latlng_refuses_a_composed_index() -> None:
+    """``P-0.8``: one cell in, one point out, or a loud refusal.
+
+    The alias exists to offer the H3 contract, and a composed index has
+    no single point to give. Refusing is the only answer that does not
+    require breaking the signature.
+
+    The two-cell case is the one that mattered: the old cast to a pair
+    was a lie the interpreter could not catch, so the call returned a
+    pair of coordinate *pairs*, swapped, with no error at all. Three or
+    more raised an unpacking error naming nothing useful.
+
+    It lives here rather than with the phase that fixed it because the
+    function lives in ``__init__``: a test of the public surface belongs
+    with the public surface, and putting it elsewhere makes a partially
+    applied change fail in a file that has nothing to do with the cause.
+    """
+    cells = [itacart.geo_to_cell(10.0 + i * 0.001, 45.0, 9) for i in range(3)]
+    assert len(set(cells)) == 3, "the sample cells have to be distinct"
+
+    single = itacart.cell_to_latlng(cells[0])
+    centroid = itacart.cell_to_centroid(cells[0])
+    assert single == (centroid[1], centroid[0])  # type: ignore[index]
+
+    for count in (2, 3):
+        composed = itacart.compose(cells[:count])
+        assert not itacart.is_atomic(composed)
+        with pytest.raises(InvalidIndexError, match=f"names {count} cells"):
+            itacart.cell_to_latlng(composed)
+
+
+def test_cell_to_centroid_still_answers_for_a_composed_index() -> None:
+    """The refusal is the alias's, not the underlying function's."""
+    cells = [itacart.geo_to_cell(10.0 + i * 0.001, 45.0, 9) for i in range(2)]
+    centroids = itacart.cell_to_centroid(itacart.compose(cells))
+    assert isinstance(centroids, list)
+    assert len(centroids) == 2
