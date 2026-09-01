@@ -96,6 +96,10 @@ Y_BITS = 10  # 2**10 = 1024 > 999
 COUNT_WIDTH_EVEN_CHILDREN = 3
 COUNT_WIDTH_ODD_CHILDREN = 5
 COUNT_WIDTH_ROOT_CHILDREN = 16
+#: Magic, version and the quadrant-group count. Group headers follow, packed.
+HEADER_SIZE_BYTES = 3
+#: Resolution of the synthetic root that holds one node per quadrant.
+GLOBE_RESOLUTION = -1
 ROOT_MAX_CHILDREN = (1 << COUNT_WIDTH_ROOT_CHILDREN) - 1
 
 _QUADRANT_TO_BITS = {name: bits for bits, name in enumerate(QUADRANTS)}
@@ -273,6 +277,26 @@ class _Parser:
         self.pos += len(text)
 
     def parse(self) -> _Node:
+        """Parse the whole index into a globe root holding quadrant groups.
+
+        An index may name more than one quadrant, comma-separated at the
+        top level, and :func:`itacart.compose` produces exactly that for
+        any cell set that crosses the equator or the meridian. A region
+        straddling the equator is ordinary, not exotic, so the grammar
+        the codec accepts has to be the grammar the package writes.
+        """
+        globe = _Node(resolution=GLOBE_RESOLUTION, component="")
+        while True:
+            globe.children.append(self._parse_quadrant())
+            if self.pos < len(self.source) and self.source[self.pos] == ",":
+                self.pos += 1
+                continue
+            break
+        if self.pos != len(self.source):
+            raise self._fail("trailing characters after the closing parenthesis")
+        return globe
+
+    def _parse_quadrant(self) -> _Node:
         match = _QUADRANT_RE.match(self.source, self.pos)
         if not match:
             raise self._fail("expected a quadrant code followed by '('")
@@ -282,8 +306,6 @@ class _Parser:
         root = _Node(resolution=0, component=quadrant)
         self._parse_children(root, child_res=1)
         self._consume(")")
-        if self.pos != len(self.source):
-            raise self._fail("trailing characters after the closing parenthesis")
         return root
 
     def _parse_children(self, parent: _Node, child_res: int) -> None:
@@ -340,7 +362,7 @@ def _parse(index: str) -> _Node:
     return _Parser(index).parse()
 
 
-def _render(root: _Node) -> str:
+def _render(globe: _Node) -> str:
     """Render the internal tree back to an index string."""
     parts: list[str] = []
 
@@ -358,17 +380,22 @@ def _render(root: _Node) -> str:
                 emit(child)
             parts.append(")")
 
-    parts.append(str(root.component))
-    parts.append("(")
-    for position, child in enumerate(root.children):
+    for position, root in enumerate(globe.children):
         if position:
             parts.append(",")
-        emit(child)
-    parts.append(")")
+        parts.append(str(root.component))
+        parts.append("(")
+        for offset, child in enumerate(root.children):
+            if offset:
+                parts.append(",")
+            emit(child)
+        parts.append(")")
     return "".join(parts)
 
 
 def _sort_key(node: _Node) -> "tuple[int, ...]":
+    if node.resolution == GLOBE_RESOLUTION + 1:
+        return (_QUADRANT_TO_BITS[str(node.component)],)
     if node.resolution == 1:
         return _pair(node.component)
     return (_alphabet(node.resolution).index(str(node.component)),)
@@ -442,22 +469,25 @@ def encode_tree(index: str) -> bytes:
         >>> encode_tree("NE(0625/0451(2,1))") == encode_tree("NE(0625/0451(1,2))")
         True
     """
-    return _encode_root(_merge(_parse(index)))
+    return _encode_globe(_merge(_parse(index)))
 
 
-def _encode_root(root: _Node) -> bytes:
-    quadrant = str(root.component)
-    count = len(root.children)
-    if count > ROOT_MAX_CHILDREN:  # pragma: no cover - 65 536 cells in one index
-        raise InvalidIndexError(f"too many resolution-1 cells: {count}")
+def _encode_globe(globe: _Node) -> bytes:
+    """Emit the header and one group per quadrant the index names."""
+    groups = globe.children
     writer = _BitWriter()
     writer.write_byte_aligned(MAGIC_TREE)
     writer.write_byte_aligned((FORMAT_VERSION << 4) & 0xFF)
-    writer.write_byte_aligned((_QUADRANT_TO_BITS[quadrant] << 6) & 0xFF)
-    writer.write_byte_aligned((count >> 8) & 0xFF)
-    writer.write_byte_aligned(count & 0xFF)
-    for child in root.children:
-        _encode_node_bits(writer, child, quadrant)
+    writer.write_byte_aligned(((len(groups) - 1) << 6) & 0xFF)
+    for root in groups:
+        quadrant = str(root.component)
+        count = len(root.children)
+        if count > ROOT_MAX_CHILDREN:  # pragma: no cover - 65 536 in one group
+            raise InvalidIndexError(f"too many resolution-1 cells: {count}")
+        writer.write(_QUADRANT_TO_BITS[quadrant], 2)
+        writer.write(count, COUNT_WIDTH_ROOT_CHILDREN)
+        for child in root.children:
+            _encode_node_bits(writer, child, quadrant)
     return writer.to_bytes()
 
 
@@ -531,7 +561,7 @@ def decode_tree(blob: bytes) -> str:
 def _decode_to_tree(blob: bytes) -> _Node:
     if not isinstance(blob, (bytes, bytearray)):
         raise MalformedBlobError(f"blob must be bytes, got {type(blob).__name__}")
-    if len(blob) < 5:
+    if len(blob) < HEADER_SIZE_BYTES:
         raise MalformedBlobError("blob is shorter than the tree header")
     if blob[0] != MAGIC_TREE:
         raise MalformedBlobError(f"bad magic byte 0x{blob[0]:02X}")
@@ -541,17 +571,24 @@ def _decode_to_tree(blob: bytes) -> _Node:
     if blob[1] & 0xF:
         raise MalformedBlobError("reserved flag bits are set")
     if blob[2] & 0b0011_1111:
-        raise MalformedBlobError("reserved quadrant bits are set")
-    count = (blob[3] << 8) | blob[4]
-    if count == 0:
-        raise MalformedBlobError("tree carries no resolution-1 cell")
-    quadrant = _BITS_TO_QUADRANT[(blob[2] >> 6) & 0b11]
-    root = _Node(resolution=0, component=quadrant)
-    reader = _BitReader(bytes(blob), start_bit=5 * 8)
-    for _ in range(count):
-        root.children.append(_decode_node_bits(reader, 1, quadrant))
+        raise MalformedBlobError("reserved header bits are set")
+    globe = _Node(resolution=GLOBE_RESOLUTION, component="")
+    reader = _BitReader(bytes(blob), start_bit=HEADER_SIZE_BYTES * 8)
+    seen: "set[str]" = set()
+    for _ in range(((blob[2] >> 6) & 0b11) + 1):
+        quadrant = _BITS_TO_QUADRANT[reader.read(2)]
+        if quadrant in seen:
+            raise MalformedBlobError(f"quadrant {quadrant} appears twice")
+        seen.add(quadrant)
+        count = reader.read(COUNT_WIDTH_ROOT_CHILDREN)
+        if count == 0:
+            raise MalformedBlobError(f"quadrant {quadrant} carries no cell")
+        root = _Node(resolution=0, component=quadrant)
+        for _ in range(count):
+            root.children.append(_decode_node_bits(reader, 1, quadrant))
+        globe.children.append(root)
     _check_trailing(reader)
-    return root
+    return globe
 
 
 def _check_trailing(reader: _BitReader) -> None:
@@ -614,7 +651,10 @@ def validate_tree(blob: bytes) -> None:
 
 
 def _single_path(index: str) -> "tuple[str, list[_Node]]":
-    root = _merge(_parse(index))
+    globe = _merge(_parse(index))
+    if len(globe.children) > 1:
+        raise InvalidIndexError("a node blob encodes exactly one cell")
+    root = globe.children[0]
     path: list[_Node] = []
     node = root
     while node.children:
@@ -832,14 +872,13 @@ def iter_leaves(blob: bytes) -> Iterator[bytes]:
         >>> len(list(iter_leaves(encode_tree("NE(0625/0451(1,2))"))))
         2
     """
-    root = _decode_to_tree(blob)
-    quadrant = str(root.component)
+    globe = _decode_to_tree(blob)
 
-    def walk(node: _Node, prefix: "list[_Node]") -> Iterator[bytes]:
+    def walk(node: _Node, prefix: "list[_Node]", quadrant: str) -> Iterator[bytes]:
         here = [*prefix, node]
         if node.children:
             for child in node.children:
-                yield from walk(child, here)
+                yield from walk(child, here, quadrant)
             return
         writer = _BitWriter()
         writer.write_byte_aligned((MAGIC_NODE_HIGH_NIBBLE << 4) | here[-1].resolution)
@@ -848,8 +887,9 @@ def iter_leaves(blob: bytes) -> Iterator[bytes]:
             _write_component(writer, step, quadrant)
         yield writer.to_bytes()
 
-    for child in root.children:
-        yield from walk(child, [])
+    for root in globe.children:
+        for child in root.children:
+            yield from walk(child, [], str(root.component))
 
 
 def count_vertices(blob: bytes) -> int:
@@ -874,7 +914,8 @@ def count_vertices(blob: bytes) -> int:
             return 1
         return sum(count(child) for child in node.children)
 
-    return sum(count(child) for child in _decode_to_tree(blob).children)
+    globe = _decode_to_tree(blob)
+    return sum(count(child) for root in globe.children for child in root.children)
 
 
 # ---------------------------------------------------------------------------

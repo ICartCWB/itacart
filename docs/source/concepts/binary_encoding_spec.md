@@ -58,10 +58,26 @@ A **tree blob** encodes a whole compositional tree as one `bytes` value.
 | `0x00` | 8 | Magic | `0xC7` |
 | `0x01` hi | 4 | Format version | `0x1` |
 | `0x01` lo | 4 | Flags | reserved, must be zero |
-| `0x02` hi | 2 | Quadrant | bit 0 west, bit 1 south |
+| `0x02` hi | 2 | Quadrant group count minus one | 0–3, so one to four groups |
 | `0x02` lo | 6 | Reserved | must be zero |
-| `0x03`–`0x04` | 16 | Resolution-1 child count | big-endian, at least 1 |
-| … | — | Bit-packed children, pre-order | variable |
+
+Then one **quadrant group** per quadrant the index names, bit-packed
+from byte 3 onwards:
+
+| Bits | Field | Values |
+| --- | --- | --- |
+| 2 | Quadrant | bit 0 west, bit 1 south |
+| 16 | Resolution-1 child count | at least 1 |
+| … | Bit-packed children, pre-order | variable |
+
+Groups are ordered by quadrant code and no quadrant may appear twice, so
+a cell set has one spelling in bytes however it was written.
+
+An index naming more than one quadrant is ordinary rather than exotic:
+{func}`itacart.compose` produces that form for any cell set crossing the
+equator or the meridian, and {func}`itacart.polyfill` produces it for
+any region over the equator. A codec that held one quadrant could not
+encode the canonical output of either.
 
 Packing is MSB-first within every byte, and the body is padded to a byte
 boundary with zeros. Trailing padding that is not zero is a malformed
@@ -182,6 +198,8 @@ cell's surplus child, a limitation its own exception module states.
   inexpressible.
 - It bounds child counts by the refinement ratio, which refuses the
   eastern border.
+- Its grammar admits one quadrant per blob, which refuses every region
+  that crosses the equator.
 
 The format version was raised to `0x1` to mark the break. Blobs written
 under version `0x0` are refused rather than read as if they agreed.

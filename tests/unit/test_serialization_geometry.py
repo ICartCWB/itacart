@@ -252,10 +252,14 @@ def test_vertices_must_all_sit_at_the_declared_resolution() -> None:
         gb.encode_geometry([mixed], "POLYGON", resolution=3)
 
 
-def test_a_branching_index_is_not_a_vertex() -> None:
-    branching = ["NE(0625/0451(1(A1,A2)))", RING[0], RING[1]]
+@pytest.mark.parametrize(
+    "branching",
+    ["NE(0625/0451(1(A1,A2)))", "NE(0625/0451(1(A1))),NW(0625/0451(1(A1)))"],
+)
+def test_a_branching_index_is_not_a_vertex(branching: str) -> None:
+    """One vertex is one cell, whether the branch is inside or across."""
     with pytest.raises(GeometryError, match="one cell, not a tree"):
-        gb.encode_geometry([branching], "POLYGON", resolution=3)
+        gb.encode_geometry([[branching, RING[0], RING[1]]], "POLYGON", resolution=3)
 
 
 @pytest.mark.parametrize("bad", ["", "   ", "not an index", 7])
@@ -368,11 +372,21 @@ def test_geometry_to_tree_deduplicates_repeated_vertices() -> None:
     assert tb.count_vertices(tree) == len(set(RING) | set(hole))
 
 
-def test_geometry_to_tree_refuses_vertices_from_two_quadrants() -> None:
+def test_geometry_to_tree_carries_vertices_from_two_quadrants() -> None:
+    """A geometry may cross the equator, and its tree has to follow.
+
+    A TreeBlob holds one group per quadrant, so a region straddling a
+    quadrant boundary is an ordinary blob rather than a refusal.
+    """
     mixed = [RING[0], RING[1], "NW(0625/0451(1(A1)))"]
     blob = gb.encode_geometry([mixed], "POLYGON", resolution=3, canonicalize=False)
-    with pytest.raises(GeometryError, match="span 2 quadrants"):
-        gb.geometry_to_tree(blob)
+    tree = gb.geometry_to_tree(blob)
+    assert tb.count_vertices(tree) == 3
+    assert tb.decode_tree(tree).count("(") > 0
+    assert sorted({cell[:2] for cell in itacart.decompose(tb.decode_tree(tree))}) == [
+        "NE",
+        "NW",
+    ]
 
 
 # --------------------------------------------------------------------------

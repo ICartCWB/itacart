@@ -136,9 +136,12 @@ def _parse_vertex(index: str) -> _Vertex:
     from .tree_blob import _merge, _pair, _parse
 
     try:
-        root = _merge(_parse(index.strip()))
+        globe = _merge(_parse(index.strip()))
     except Exception as exc:
         raise GeometryError(f"malformed vertex index {index!r}: {exc}") from exc
+    if len(globe.children) > 1:
+        raise GeometryError(f"a vertex is one cell, not a tree: {index!r}")
+    root = globe.children[0]
     quadrant = str(root.component)
     node = root
     refinements: list[str] = []
@@ -777,8 +780,6 @@ def geometry_to_tree(blob: bytes) -> bytes:
 
     Raises:
         MalformedBlobError: If the blob fails structural validation.
-        GeometryError: If the vertices span more than one quadrant, which
-            no single TreeBlob can hold.
 
     Example:
         >>> blob = encode_geometry([["NE(0625/0451)"]], "POINT", resolution=1)
@@ -793,11 +794,12 @@ def geometry_to_tree(blob: bytes) -> bytes:
             if index not in seen:
                 seen.add(index)
                 cells.append(index)
-    quadrants = {index[:2] for index in cells}
-    if len(quadrants) > 1:
-        raise GeometryError(
-            f"vertices span {len(quadrants)} quadrants; a TreeBlob holds one"
+    groups: "dict[str, list[str]]" = {}
+    for index in cells:
+        groups.setdefault(index[:2], []).append(index[3:-1])
+    return encode_tree(
+        ",".join(
+            f"{quadrant}({','.join(sorted(bodies))})"
+            for quadrant, bodies in sorted(groups.items())
         )
-    quadrant = cells[0][:2]
-    bodies = sorted(index[len(quadrant) + 1 : -1] for index in cells)
-    return encode_tree(f"{quadrant}({','.join(bodies)})")
+    )

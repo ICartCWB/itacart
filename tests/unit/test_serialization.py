@@ -379,12 +379,12 @@ def test_descending_past_the_finest_resolution_is_refused() -> None:
     ("blob", "message"),
     [
         (b"", "shorter than"),
-        (b"\x00\x10\x00\x00\x01", "bad magic"),
-        (b"\xc7\x00\x00\x00\x01", "unsupported format version"),
-        (b"\xc7\x11\x00\x00\x01", "reserved flag"),
-        (b"\xc7\x10\x01\x00\x01", "reserved quadrant"),
-        (b"\xc7\x10\x00\x00\x00", "no resolution-1 cell"),
-        (b"\xc7\x10\x00\x00\x01", "ends inside a field"),
+        (b"\x00\x10\x00", "bad magic"),
+        (b"\xc7\x00\x00", "unsupported format version"),
+        (b"\xc7\x11\x00", "reserved flag"),
+        (b"\xc7\x10\x01", "reserved header"),
+        (b"\xc7\x10\x00\x00\x00\x00", "carries no cell"),
+        (b"\xc7\x10\x00\x00\x40", "ends inside a field"),
     ],
 )
 def test_malformed_blobs_are_refused(blob: bytes, message: str) -> None:
@@ -468,8 +468,7 @@ def test_a_reserved_refinement_code_in_a_node_blob_is_refused() -> None:
 def test_a_reserved_refinement_code_is_refused() -> None:
     """Codes 25 to 31 of a five-bit field address nothing."""
     blob = bytearray(tree_blob.encode_tree("NE(0625/0451(3(A1)))"))
-    blob[-2] |= 0b0000_0111
-    blob[-1] |= 0b1110_0000
+    blob[9] |= 0b0111_1100  # the five-bit resolution-3 field, at bit 73
     with pytest.raises(MalformedBlobError, match="reserved"):
         tree_blob.validate_tree(bytes(blob))
 
@@ -490,3 +489,73 @@ def test_a_corrupt_column_in_a_tree_blob_is_refused() -> None:
     blob[6] |= 0b1110_0000  # column bits 8-10
     with pytest.raises(MalformedBlobError, match="not addressable"):
         tree_blob.validate_tree(bytes(blob))
+
+
+# --------------------------------------------------------------------------
+# More than one quadrant in a single blob
+# --------------------------------------------------------------------------
+
+
+def test_an_index_may_name_more_than_one_quadrant() -> None:
+    """`compose` writes this form, so the codec has to read it.
+
+    A blob carries one group per quadrant. Refusing the multi-quadrant
+    spelling would make the canonical output of a core function
+    unencodable, which is a defect in the codec and not in the index.
+    """
+    index = "NE(0001/0001),NE(0002/0001),NW(0003/0004)"
+    blob = tree_blob.encode_tree(index)
+    assert tree_blob.count_vertices(blob) == 3
+    assert tree_blob.decode_tree(blob) == tree_blob.recompose_to_prefix_form(index)
+    assert tree_blob.decode_tree(blob) == "NE(0001/0001,0002/0001),NW(0003/0004)"
+
+
+def test_a_region_straddling_the_equator_encodes() -> None:
+    """Crossing a quadrant boundary is ordinary, not exotic.
+
+    Any region over the equator lands in two quadrants, and `polyfill`
+    produces the two-group index directly.
+    """
+    from shapely.geometry import Polygon
+
+    region = Polygon([(10.0, -0.02), (10.04, -0.02), (10.04, 0.02), (10.0, 0.02)])
+    index = itacart.polyfill(region, 4, compact=False)
+    assert sorted({cell[:2] for cell in itacart.decompose(index)}) == ["NE", "SE"]
+    blob = tree_blob.encode_tree(index)
+    assert tree_blob.count_vertices(blob) == itacart.count_cells(index)
+    assert tree_blob.decode_tree(blob) == tree_blob.recompose_to_prefix_form(index)
+
+
+def test_compose_output_is_always_encodable() -> None:
+    """All four quadrants at once, which is the widest an index gets."""
+    cells = [
+        "NE(0001/0001)",
+        "NE(0002/0001)",
+        "NW(0003/0004)",
+        "SE(0005/0006)",
+        "SW(0007/0008)",
+    ]
+    index = itacart.compose(cells)
+    blob = tree_blob.encode_tree(index)
+    assert tree_blob.decode_tree(blob) == index
+    assert tree_blob.count_vertices(blob) == len(cells)
+
+
+def test_quadrant_groups_are_ordered_so_the_blob_stays_addressable() -> None:
+    """Two spellings of the same cross-quadrant set give one blob."""
+    forward = "NE(0001/0001),NW(0003/0004)"
+    backward = "NW(0003/0004),NE(0001/0001)"
+    assert tree_blob.encode_tree(forward) == tree_blob.encode_tree(backward)
+
+
+def test_a_blob_repeating_a_quadrant_is_refused() -> None:
+    """Groups are merged before encoding, so a repeat can only be damage."""
+    good = bytearray(tree_blob.encode_tree("NE(0001/0001),NW(0003/0004)"))
+    good[8] &= 0b1100_1111  # the second group's quadrant, at bit 66, back to NE
+    with pytest.raises(MalformedBlobError, match="appears twice"):
+        tree_blob.validate_tree(bytes(good))
+
+
+def test_a_node_blob_still_encodes_exactly_one_cell() -> None:
+    with pytest.raises(InvalidIndexError, match="exactly one cell"):
+        tree_blob.encode_node("NE(0001/0001),NW(0003/0004)")
