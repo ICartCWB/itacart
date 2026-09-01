@@ -48,8 +48,6 @@ from typing import TYPE_CHECKING
 
 from .constants import (
     ANTEMERIDIAN_LON,
-    DESCENT_CLOSE,
-    DESCENT_OPEN,
     MAX_RESOLUTION,
     QUINARY_GRID_SIZE,
     RES1_DIGITS,
@@ -58,7 +56,13 @@ from .constants import (
 )
 from .exceptions import DomainError, NonExistentCellError, ResolutionError
 from .geodesy import geodetic_to_sinusoidal
-from .index import is_atomic, is_valid_index, iter_cells, split_components
+from .index import (
+    is_atomic,
+    is_valid_index,
+    iter_cells,
+    join_components,
+    split_components,
+)
 from .resolutions import cell_size, linear_refinement_ratio
 
 if TYPE_CHECKING:
@@ -106,22 +110,6 @@ the package. An earlier version held a second, inverted copy of it.
 # --------------------------------------------------------------------------
 # Index assembly
 # --------------------------------------------------------------------------
-
-
-def _from_path(components: list[str]) -> str:
-    """Assemble an atomic index from its per-level components.
-
-    Inverse of :func:`itacart.index.split_components`. The origin calls
-    this ``compositional_index.from_path``; the package has no public
-    counterpart, so it lives here privately. It duplicates
-    ``index._render_path``, and promoting one of the two is the chat
-    ponte's call, not this phase's.
-    """
-    quadrant, *rest = components
-    if not rest:
-        return quadrant
-    body = DESCENT_OPEN.join(rest)
-    return f"{quadrant}{DESCENT_OPEN}{body}{DESCENT_CLOSE * len(rest)}"
 
 
 # --------------------------------------------------------------------------
@@ -367,7 +355,7 @@ def _quantize(x: float, y: float, quadrant: str, resolution: int) -> str:
         quadrant = quadrant[0] + "E"
         codes = _descend_triangle(x, y, quadrant, row, resolution)
         base = f"{0:0{RES1_DIGITS}d}{RES1_SEPARATOR}{row:0{RES1_DIGITS}d}"
-        return _from_path([quadrant, base, *codes])
+        return join_components([quadrant, base, *codes])
 
     codes = _descend_parallelogram(
         u - (column + row) * _L1 - (absolute_y - row * _L1),
@@ -378,7 +366,7 @@ def _quantize(x: float, y: float, quadrant: str, resolution: int) -> str:
     )
 
     base = f"{column:0{RES1_DIGITS}d}{RES1_SEPARATOR}{row:0{RES1_DIGITS}d}"
-    return _from_path([quadrant, base, *codes])
+    return join_components([quadrant, base, *codes])
 
 
 def _bucket(residual: float, sub: float, divisor: int) -> int:

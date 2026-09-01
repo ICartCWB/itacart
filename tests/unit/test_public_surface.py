@@ -37,6 +37,8 @@ CONTRACT_MODULES = (
     "interop",
     "resolutions",
     "serialization",
+    "serialization.geometry_blob",
+    "serialization.tree_blob",
     "topology",
 )
 

@@ -586,18 +586,16 @@ def test_count_matches_the_centre_mode_fill(parcel: Polygon) -> None:
 
 
 _PREVIOUSLY_LISTED_DOORS: tuple[tuple[str, str], ...] = (
-    ("itacart.cells", "_from_path"),
     ("itacart.cells", "_quantize"),
     ("itacart.cells", "geo_to_cell"),
     ("itacart.cells", "sinusoidal_to_cell"),
-    ("itacart.hierarchy", "_render"),
     ("itacart.hierarchy", "_descend"),
     ("itacart.hierarchy", "_shift_column"),
     ("itacart.hierarchy", "_parent_cell"),
     ("itacart.hierarchy", "common_ancestor"),
     ("itacart.hierarchy", "compact_cells"),
     ("itacart.index", "_canonical_base"),
-    ("itacart.index", "_render_path"),
+    ("itacart.index", "join_components"),
     ("itacart.index", "_render_node"),
     ("itacart.index", "_render_tree"),
     ("itacart.index", "compose"),

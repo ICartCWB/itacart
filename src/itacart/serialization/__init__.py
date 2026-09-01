@@ -30,16 +30,20 @@ from .geometry_blob import (
     encode_geometry,
     geometry_hash,
     geometry_to_tree,
+    read_geometry_type,
     validate_geometry,
 )
 from .tree_blob import (
     count_vertices,
+    decode_node,
     decode_tree,
     deserialize_from_blob,
+    encode_node,
     encode_tree,
     is_ancestor_binary,
     iter_leaves,
     prefix_at_resolution_binary,
+    recompose_to_prefix_form,
     resolution_of_binary,
     serialize_to_blob,
     validate_tree,
@@ -48,6 +52,9 @@ from .tree_blob import (
 __all__ = [
     "encode_tree",
     "decode_tree",
+    "encode_node",
+    "decode_node",
+    "recompose_to_prefix_form",
     "serialize_to_blob",
     "deserialize_from_blob",
     "is_ancestor_binary",
@@ -61,4 +68,5 @@ __all__ = [
     "validate_geometry",
     "geometry_hash",
     "geometry_to_tree",
+    "read_geometry_type",
 ]

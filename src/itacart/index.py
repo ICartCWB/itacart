@@ -40,7 +40,7 @@ happened in the prototype.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Final, Iterable, Iterator
+from typing import Final, Iterable, Iterator, Sequence
 
 from .constants import (
     DESCENT_CLOSE,
@@ -72,6 +72,7 @@ __all__ = [
     "count_cells",
     "iter_cells",
     "split_components",
+    "join_components",
     "quadrant_of",
     "base_cell_of",
 ]
@@ -342,9 +343,31 @@ def _count_leaves(node: _Node) -> int:
     return sum(_count_leaves(child) for child in node.children)
 
 
-def _render_path(path: tuple[str, ...]) -> str:
-    """Render one component path as a fully qualified atomic index."""
-    quadrant, *rest = path
+def join_components(components: Sequence[str]) -> str:
+    """Assemble a component path into a fully qualified atomic index.
+
+    Inverse of :func:`split_components`, and the only place in the
+    package that writes the descent syntax for a single cell. It stood
+    in three modules with three names and one body; a rule spelled three
+    times is a rule that can disagree with itself.
+
+    Distinct from :func:`compose`, which folds several *atomic indices*
+    into one compositional index. This takes the per-level components of
+    a single cell.
+
+    Args:
+        components: Quadrant first, then one refinement code per level.
+
+    Returns:
+        The atomic index string. A lone quadrant renders as itself.
+
+    Example:
+        >>> join_components(["NE", "0625/0451", "3"])
+        'NE(0625/0451(3))'
+        >>> join_components(split_components("NE(0625/0451(3))"))
+        'NE(0625/0451(3))'
+    """
+    quadrant, *rest = components
     if not rest:
         return quadrant
     body = DESCENT_OPEN.join(rest)
@@ -647,7 +670,7 @@ def iter_cells(index: str) -> Iterator[str]:
         Fully qualified atomic index strings.
     """
     for path in _leaf_paths(_parse_tree(index)):
-        yield _render_path(path)
+        yield join_components(path)
 
 
 def split_components(cell: str) -> list[str]:
@@ -710,9 +733,9 @@ def _ancestor_per_cell(index: str, depth: int) -> str | list[str]:
     for path in _leaf_paths(_parse_tree(index)):
         if len(path) <= depth:
             raise InvalidIndexError(
-                f"{_render_path(path)!r} has no component at depth {depth}"
+                f"{join_components(path)!r} has no component at depth {depth}"
             )
-        values.append(_render_path(path[: depth + 1]))
+        values.append(join_components(path[: depth + 1]))
     if len(values) == 1:
         return values[0]
     return values

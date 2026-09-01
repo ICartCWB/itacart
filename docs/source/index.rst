@@ -21,6 +21,8 @@ mapping, tessellated directly on the WGS84 ellipsoid.
    concepts/indexing
    concepts/boundary
    concepts/conformance
+   concepts/binary_encoding_spec
+   concepts/geometry_encoding_spec
 
 .. toctree::
    :maxdepth: 2

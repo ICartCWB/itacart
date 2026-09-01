@@ -18,8 +18,8 @@ import itacart
 from itacart import topology
 from itacart.boundary import ZONE_ROWS, last_lattice_column
 from itacart.exceptions import DomainError, InvalidIndexError, ResolutionError
-from itacart.hierarchy import _parent_cell, _render
-from itacart.index import split_components
+from itacart.hierarchy import _parent_cell
+from itacart.index import join_components, split_components
 
 BASE_SIDE_M = 10_000.0
 SNAP_TOLERANCE = 1e-9
@@ -395,7 +395,7 @@ QUINARY_PARENT = "NE(0500/0300(1))"
 
 
 def child(parent: str, code: str) -> str:
-    return _render(split_components(parent) + [code])
+    return join_components(split_components(parent) + [code])
 
 
 @pytest.mark.parametrize(

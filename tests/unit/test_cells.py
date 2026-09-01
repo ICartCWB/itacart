@@ -25,11 +25,11 @@ import time
 import pytest
 
 from itacart import boundary, cells
-from itacart.cells import FLOOR_EPSILON_M, _anchor_on_plane, _from_path
+from itacart.cells import FLOOR_EPSILON_M, _anchor_on_plane
 from itacart.constants import RES1_MAX_INDEX
 from itacart.exceptions import DomainError, InvalidIndexError, ResolutionError
 from itacart.geodesy import geodetic_to_sinusoidal
-from itacart.index import decompose, split_components
+from itacart.index import decompose, join_components, split_components
 from itacart.resolutions import cell_size, nominal_cell_area
 
 RESOLUTIONS = tuple(range(1, 14))
@@ -771,11 +771,11 @@ def test_the_plane_entry_point_rejects_non_finite_coordinates(bogus: float) -> N
 def test_the_assembler_inverts_split_components(resolution: int) -> None:
     """The invariant that keeps the private helper honest."""
     cell = cells.geo_to_cell(13.0, 42.0, resolution)
-    assert _from_path(split_components(cell)) == cell
+    assert join_components(split_components(cell)) == cell
 
 
 def test_the_assembler_renders_a_bare_quadrant() -> None:
-    assert _from_path(["NE"]) == "NE"
+    assert join_components(["NE"]) == "NE"
 
 
 @pytest.mark.parametrize("resolution", RESOLUTIONS)

@@ -50,6 +50,7 @@ from .index import (
     QUADRANT_RESOLUTION,
     compose,
     decompose,
+    join_components,
     split_components,
 )
 
@@ -98,15 +99,6 @@ of the grid had no refinement at all below resolution 8.
 # --------------------------------------------------------------------------
 # Component paths
 # --------------------------------------------------------------------------
-
-
-def _render(components: Sequence[str]) -> str:
-    """Render a component path back into a fully qualified index string."""
-    quadrant, *rest = components
-    if not rest:
-        return quadrant
-    body = _DESCENT_OPEN.join(rest)
-    return f"{quadrant}{_DESCENT_OPEN}{body}{_DESCENT_CLOSE * len(rest)}"
 
 
 def _resolution_of(components: Sequence[str]) -> int:
@@ -197,15 +189,15 @@ def get_parent(index: str, target_res: int | None = None) -> str | list[str]:
         wanted = current - 1 if target_res is None else target_res
         if wanted < MIN_RESOLUTION:
             raise MinResolutionError(
-                f"{_render(components)!r} is at resolution {current} "
+                f"{join_components(components)!r} is at resolution {current} "
                 "and has no coarser prefix"
             )
         if wanted > current:
             raise ResolutionError(
-                f"resolution {wanted} is finer than {_render(components)!r} "
+                f"resolution {wanted} is finer than {join_components(components)!r} "
                 f"at resolution {current}"
             )
-        values.append(_render(components[: wanted + 1]))
+        values.append(join_components(components[: wanted + 1]))
     return _scalar_or_list(index, values)
 
 
@@ -226,7 +218,10 @@ def get_ancestors(index: str) -> list[str] | list[list[str]]:
     chains: list[list[str]] = []
     for components in _paths(index):
         chains.append(
-            [_render(components[: depth + 1]) for depth in range(len(components) - 1)]
+            [
+                join_components(components[: depth + 1])
+                for depth in range(len(components) - 1)
+            ]
         )
     if len(chains) == 1 and _is_single(index):
         return chains[0]
@@ -263,7 +258,7 @@ def common_ancestor(index: str) -> str:
         while depth < limit and shared[depth] == components[depth]:
             depth += 1
         shared = shared[:depth]
-    return _render(shared)
+    return join_components(shared)
 
 
 # --------------------------------------------------------------------------
@@ -458,7 +453,7 @@ def _parent_cell(cell: str) -> str:
     components = split_components(cell)
     if _resolution_of(components) <= QUADRANT_RESOLUTION:
         raise MinResolutionError(f"{cell!r} is a quadrant and has no parent cell")
-    prefix = _render(components[:-1])
+    prefix = join_components(components[:-1])
     if boundary.is_valid_cell(prefix):
         return prefix
     western = _shift_column(prefix, -1)
@@ -504,7 +499,7 @@ def child_position(cell: str) -> int | list[int]:
                 f"{atom!r} is a resolution-1 cell; its siblings are the "
                 "lattice of its quadrant, which carries no refinement alphabet"
             )
-        prefix = _render(components[:-1])
+        prefix = join_components(components[:-1])
         if boundary.is_valid_cell(prefix) and not boundary.absorbs_border(prefix):
             positions.append(refinement_alphabet(current).index(components[-1]))
             continue
@@ -601,7 +596,7 @@ def _candidate_parents(present: set[tuple[str, ...]]) -> set[str]:
     for components in present:
         if _resolution_of(components) <= BASE_CELL_RESOLUTION:
             continue
-        prefix = _render(components[:-1])
+        prefix = join_components(components[:-1])
         if boundary.is_valid_cell(prefix):
             candidates.add(prefix)
             continue
@@ -647,7 +642,7 @@ def compact_cells(index: str) -> str:
             present.add(path)
             changed = True
     ordered = sorted(present, key=_sort_key)
-    return compose(_render(components) for components in ordered)
+    return compose(join_components(components) for components in ordered)
 
 
 def uncompact_cells(index: str, target_res: int) -> Iterator[str]:

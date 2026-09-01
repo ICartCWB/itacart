@@ -49,8 +49,8 @@ from .boundary import (
 )
 from .cells import cell_to_boundary
 from .exceptions import DomainError, InvalidIndexError, ResolutionError
-from .hierarchy import _parent_cell, _render, get_children
-from .index import decompose, split_components
+from .hierarchy import _parent_cell, get_children
+from .index import decompose, join_components, split_components
 from .resolutions import get_resolution
 
 __all__ = [
@@ -413,7 +413,7 @@ def _has_exceptional_ancestor(cell: str) -> bool:
     """
     components = split_components(cell)
     for depth in range(2, len(components)):
-        if _is_exceptional(_render(components[:depth])):
+        if _is_exceptional(join_components(components[:depth])):
             return True
     return False
 
@@ -483,7 +483,7 @@ def _descend_neighbor(cell: str, direction: Direction) -> str | None:
         max(-1, min(1, overflow[1])),
     )
     if outward == (0, 0):
-        return _render(split_components(parent) + [_encode(column, row, side)])
+        return join_components(split_components(parent) + [_encode(column, row, side)])
 
     neighbour_parent = _neighbor_of_atom(parent, _COMPASS[outward])
     if neighbour_parent is None:
@@ -495,7 +495,7 @@ def _descend_neighbor(cell: str, direction: Direction) -> str | None:
             "square, so the wrapped code would not name the right child"
         )
     code = _encode(column % side, row % side, side)
-    return _render(split_components(neighbour_parent) + [code])
+    return join_components(split_components(neighbour_parent) + [code])
 
 
 # --------------------------------------------------------------------------
@@ -1046,7 +1046,7 @@ def _deep_lattice_ij(cell: str) -> tuple[int, int, int]:
     none inside a parent. Both are the same geometry; the frames differ.
     """
     components = split_components(cell)
-    _, column, row = _res1_parts(_render(components[:2]))
+    _, column, row = _res1_parts(join_components(components[:2]))
     factor = 1
     for depth, code in enumerate(components[2:], start=2):
         side = _grid_side(depth)

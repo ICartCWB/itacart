@@ -749,6 +749,7 @@ def test_public_surface_matches_the_contract() -> None:
         "count_cells",
         "iter_cells",
         "split_components",
+        "join_components",
         "quadrant_of",
         "base_cell_of",
     }

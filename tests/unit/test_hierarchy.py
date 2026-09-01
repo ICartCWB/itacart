@@ -777,7 +777,7 @@ class TestSortKey:
 class TestRenderAndDescend:
     def test_render_round_trips_through_split_components(self) -> None:
         for cell in (INTERIOR, "NE", _chain_to(MAX_RESOLUTION), "NE(2004/0000(3))"):
-            assert hy._render(ix.split_components(cell)) == cell
+            assert ix.join_components(ix.split_components(cell)) == cell
 
     def test_descend_appends_one_component(self) -> None:
         code = refinement_alphabet(2)[0]
