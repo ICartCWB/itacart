@@ -52,7 +52,7 @@ from .cells import cell_to_boundary
 from .exceptions import DomainError, InvalidIndexError, ResolutionError
 from .hierarchy import _parent_cell, get_children
 from .index import decompose, join_components, split_components
-from .resolutions import get_resolution
+from .resolutions import cell_size, get_resolution
 
 __all__ = [
     "grid_disk",
@@ -1130,6 +1130,77 @@ def _seam_row_limit(resolution: int) -> int:
     return rows
 
 
+def _is_polar_cap(cell: str) -> bool:
+    """Whether a cell is the single triangle that closes a hemisphere.
+
+    Resolution 1 only, and the restriction is the measurement rather than a
+    simplification. What makes the cap worth a case of its own is that its
+    other two contacts are trapezoids of the last column, leaving one way
+    out; refine it once and that stops being true, with three contacts free
+    of trapezoids at resolution 2 and eight at resolution 3. The reduction
+    below is a cut of the graph at a single vertex, and there is no single
+    vertex to cut below the top level.
+    """
+    _, row, _ = _lattice_descent(cell)
+    return get_resolution(cell) == 1 and row >= _seam_row_limit(1)
+
+
+def _polar_equatorward_triangle(cell: str) -> str:
+    """The one cell a polar cap can be left by.
+
+    The cap touches three cells and two of them are trapezoids of the last
+    column, which this measure does not step on. What remains is the meridian
+    triangle of the row below, and because it is the only way out, the
+    distance from the cap is one step more than the distance from it -- a cut
+    of the graph at a single vertex rather than a shortcut chosen among
+    several.
+    """
+    components = split_components(cell)
+    quadrant = components[0]
+    equatorward = _seam_row_limit(get_resolution(cell)) - 1
+    descent = [quadrant, f"0000/{equatorward:04d}"]
+    return join_components(descent)
+
+
+def _antimeridian_reach(cell: str) -> int:
+    """Columns between a cell and the last addressable one of its row.
+
+    Rows narrow towards the pole, so this is read from the row the cell
+    actually sits on rather than from a global width. Measured, the
+    descended column never exceeds the limit the row declares, at every
+    resolution checked.
+    """
+    column, row, _ = _lattice_descent(cell)
+    quadrant = split_components(cell)[0]
+    resolution = get_resolution(cell)
+    return last_lattice_column(quadrant, row, cell_size(resolution)) - abs(column)
+
+
+def _crosses_antimeridian(origin: str, destination: str, through_meridian: int) -> bool:
+    """Whether the shorter way between two cells leaves through the seam.
+
+    The measure knows one seam, the prime meridian, and reads a distance as
+    the path that reaches it and crosses. Two cells far to the east and west
+    are also neighbours the other way round, across the antimeridian, and
+    the contact sets report that contact: measured, cells two columns inside
+    the last one face each other three steps apart while the prime-meridian
+    route runs to 1547.
+
+    That other route is not a path this measure can express. ITACaRT
+    addresses the land beyond the line through an extension zone rather than
+    by stepping across it, so a number returned here would name a walk the
+    index does not admit. The pair is refused instead.
+
+    The test is a comparison and not a proximity, which is what keeps it
+    from refusing pairs it should answer: the seam route costs each cell its
+    reach to the last column of its own row plus the step across, and only
+    when that total does not exceed the prime-meridian reading is the
+    reading the wrong one to return.
+    """
+    through_seam = _antimeridian_reach(origin) + _antimeridian_reach(destination) + 1
+    return through_seam <= through_meridian
+
+
 def _seam(rectified_row: int) -> tuple[int, int]:
     """The meridian triangle of a rectified row, in the rectified frame.
 
@@ -1269,7 +1340,8 @@ def grid_distance(origin: str, destination: str, metric: Metric = "chebyshev") -
         ResolutionError: If the cells sit at different resolutions, or are
             quadrants.
         DomainError: If a path cannot be resolved across the boundary
-            between the cells.
+            between the cells, which includes either cell being a trapezoid
+            of the last addressable column.
         ValueError: If ``metric`` is unknown.
     """
     if metric not in ("chebyshev", "manhattan"):
@@ -1283,11 +1355,46 @@ def grid_distance(origin: str, destination: str, metric: Metric = "chebyshev") -
         )
     if get_resolution(origin) < 1:
         raise ResolutionError("a quadrant has no position on the lattice")
+    for cell in (origin, destination):
+        if cell_shape(cell) == "trapezoid":
+            raise DomainError(
+                f"{cell!r} is a trapezoid; the lattice step is not defined at "
+                "the last addressable column of a row, where the row above "
+                "narrows and the poleward neighbour lies several columns in. "
+                "Land beyond the line is addressed through an extension zone "
+                "rather than by stepping across it"
+            )
+    if origin == destination:
+        return 0
+    for cell in (origin, destination):
+        if _is_polar_cap(cell) and metric == "manhattan":
+            raise DomainError(
+                f"{cell!r} closes its hemisphere and its one remaining "
+                "contact is a shared vertex; a vertex is not a Manhattan "
+                "step, so no Manhattan path leaves it"
+            )
+    if _is_polar_cap(origin):
+        return 1 + grid_distance(
+            _polar_equatorward_triangle(origin), destination, metric
+        )
+    if _is_polar_cap(destination):
+        return 1 + grid_distance(
+            origin, _polar_equatorward_triangle(destination), metric
+        )
     resolution = get_resolution(origin)
     here, there = _lattice_descent(origin), _lattice_descent(destination)
     if (here[0] > 0) == (there[0] > 0) or here[0] == 0 or there[0] == 0:
         return _span(_rectified(origin), _rectified(destination), metric)
-    return _meridian_distance(origin, destination, metric, resolution)
+    crossing = _meridian_distance(origin, destination, metric, resolution)
+    if _crosses_antimeridian(origin, destination, crossing):
+        raise DomainError(
+            "grid_distance is not defined across the antimeridian seam; "
+            f"{origin!r} and {destination!r} are no further apart around the "
+            "far side of the lattice than through the prime meridian, and "
+            "ITACaRT reaches the land beyond the line through an extension "
+            "zone rather than by stepping across it"
+        )
+    return crossing
 
 
 def are_neighbor_cells(origin: str, destination: str) -> bool:

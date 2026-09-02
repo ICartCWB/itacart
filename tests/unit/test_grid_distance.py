@@ -20,13 +20,19 @@ import pytest
 
 import itacart
 from itacart import topology
+from itacart.exceptions import DomainError
 
 # --------------------------------------------------------------------------
 # The oracle
 # --------------------------------------------------------------------------
 
-#: Small enough to enumerate exhaustively, wide enough to hold the meridian,
-#: the equator and the corner where they meet.
+#: The domain every count below enumerates over, written out because a count
+#: without its domain cannot be checked. Columns one to five and rows zero to
+#: five of each quadrant, at the resolution named by the test.
+#:
+#: What this domain excludes is as much a part of it: the last addressable
+#: column of a row, and the rows nearest the pole. Both are measured and both
+#: are wrong, pinned below rather than left to a handoff.
 WINDOW = 5
 
 
@@ -259,6 +265,95 @@ def test_a_shared_prefix_does_not_mean_a_shared_side_of_the_line() -> None:
 
 
 # --------------------------------------------------------------------------
+# What the path may not touch
+# --------------------------------------------------------------------------
+
+#: Every door out of arithmetic that ``topology`` still holds open. Ring
+#: construction, the shapely predicates the contact sets are built from, and
+#: the projection the replaced hinge sampled. The module imports several of
+#: these for its other functions, so their presence proves nothing about this
+#: path; only firing them does.
+GEOMETRY_DOORS = (
+    ("itacart.topology", "cell_to_boundary"),
+    ("itacart.topology", "_ring"),
+    ("itacart.topology", "_contacts"),
+    ("itacart.topology", "_touching"),
+    ("itacart.topology", "Polygon"),
+    ("itacart.topology", "LineString"),
+    ("itacart.topology", "snap"),
+    ("itacart.topology", "translate"),
+    ("itacart.cells", "cell_to_sinusoidal"),
+    ("itacart.cells", "sinusoidal_to_cell"),
+)
+
+
+def _arm(doors: tuple[tuple[str, str], ...], patch: pytest.MonkeyPatch) -> None:
+    """Replace every named door with something that fails if it is called."""
+    import importlib
+
+    def detonator(module_name: str, label: str) -> object:
+        def fired(*args: object, **kwargs: object) -> object:
+            raise AssertionError(f"the distance reached {module_name}.{label}")
+
+        return fired
+
+    for module_name, label in doors:
+        module = importlib.import_module(module_name)
+        patch.setattr(module, label, detonator(module_name, label))
+
+
+@pytest.mark.parametrize("metric", ("chebyshev", "manhattan"))
+@pytest.mark.parametrize(
+    "origin,destination",
+    (
+        ("NE(0500/0300)", "NE(0505/0304)"),
+        ("NE(0000/0110(3))", "NE(0000/0110(2))"),
+        ("NE(0003/0000)", "SW(0001/0002)"),
+        ("NE(0000/0110(1(E5)))", "NW(0002/0110(1(A1)))"),
+        ("SE(0000/0000(4))", "SW(0002/0004(1))"),
+    ),
+)
+def test_the_distance_reaches_no_geometry_and_no_contact_set(
+    origin: str,
+    destination: str,
+    metric: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The property is about the path, so the evidence has to be too.
+
+    That two names are absent from the module says nothing: ``topology``
+    still imports shapely and builds rings for its neighbour machinery, and
+    a distance that quietly reached one of them would leave the imports
+    looking exactly the same. Arming the doors and running the measure is
+    the only instrument that can tell the two apart.
+
+    The pairs span the four cases the measure distinguishes -- within one
+    side, across the meridian under a shared prefix, across both axes, and
+    across the meridian at depth -- so no branch of the path escapes by
+    being untaken.
+    """
+    _arm(GEOMETRY_DOORS, monkeypatch)
+    assert itacart.grid_distance(origin, destination, metric) >= 0
+
+
+def test_the_armed_doors_are_doors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The control. An armed door that no longer exists arms nothing.
+
+    Without this, deleting a name from ``topology`` would silently shrink
+    the guarantee above while leaving it green.
+    """
+    import importlib
+
+    for module_name, label in GEOMETRY_DOORS:
+        assert hasattr(
+            importlib.import_module(module_name), label
+        ), f"{module_name}.{label} is armed but absent"
+    _arm(GEOMETRY_DOORS, monkeypatch)
+    with pytest.raises(AssertionError, match="the distance reached"):
+        itacart.are_neighbor_cells("NE(0500/0300)", "NE(0501/0300)")
+
+
+# --------------------------------------------------------------------------
 # The minimisation
 # --------------------------------------------------------------------------
 
@@ -298,3 +393,224 @@ def test_the_crossing_row_is_searched_in_each_hemisphere_separately() -> None:
 )
 def test_the_row_limit_follows_the_refinement(resolution: int, rows: int) -> None:
     assert topology._seam_row_limit(resolution) == rows
+
+
+# --------------------------------------------------------------------------
+# The border, declared rather than omitted
+# --------------------------------------------------------------------------
+
+#: Trapezoids of the last addressable column, one per row measured. The
+#: measure refuses them: the row above narrows, so the poleward neighbour of
+#: a last-column cell lies several columns in and the uniform shear stops
+#: describing it. Land beyond the line is addressed through an extension zone
+#: rather than by stepping across it.
+REFUSED_ROWS = (0, 300, 600, 900)
+
+
+@pytest.mark.parametrize("row", REFUSED_ROWS)
+@pytest.mark.parametrize("metric", ("chebyshev", "manhattan"))
+def test_a_trapezoid_is_refused_at_the_entrance(row: int, metric: str) -> None:
+    trapezoid = f"NE({topology._last_column('NE', row):04d}/{row:04d})"
+    assert itacart.cell_shape(trapezoid) == "trapezoid"
+    with pytest.raises(DomainError, match="trapezoid"):
+        itacart.grid_distance(trapezoid, "NE(0500/0300)", metric)
+    with pytest.raises(DomainError, match="trapezoid"):
+        itacart.grid_distance("NE(0500/0300)", trapezoid, metric)
+
+
+def test_the_refusal_is_a_limit_of_the_measure_and_not_of_the_adjacency() -> None:
+    """The disk still answers where the distance declines to.
+
+    Written the same way as the refusal it replaces: a measure that stops
+    where the lattice stops is not a tessellation that stops there. The
+    contact sets carry the trapezoid and ``grid_disk`` reads them.
+    """
+    trapezoid = f"NE({topology._last_column('NE', 600):04d}/0600)"
+    disk = itacart.grid_disk(trapezoid, 1, dedupe=True, flatten=True)
+    assert len(set(disk)) > 1
+    assert any(itacart.are_neighbor_cells(trapezoid, cell) for cell in disk)
+
+
+#: Pairs the trapezoid refusal does not see -- ordinary parallelograms two
+#: columns inside the last one -- that are nonetheless closer around the far
+#: side of the lattice. Measured under the oracle that skips trapezoids, so
+#: the short route is not one that walks the border cells: at the edges of
+#: the FIJI and CHUKOTKA extension zones the seam contact needs no trapezoid
+#: at all. Refused rather than answered, because reaching the land beyond the
+#: line is what an extension zone is for.
+ANTIMERIDIAN_REFUSED = (
+    ("NE(1173/0600)", "NW(1173/0600)", "chebyshev"),
+    ("NE(1173/0600)", "NW(1172/0600)", "chebyshev"),
+    ("SE(1931/0171)", "SW(1931/0170)", "chebyshev"),
+    ("SE(1864/0237)", "SW(1863/0238)", "manhattan"),
+)
+
+
+@pytest.mark.parametrize("origin,destination,metric", ANTIMERIDIAN_REFUSED)
+def test_a_pair_closer_around_the_far_side_is_refused(
+    origin: str, destination: str, metric: str
+) -> None:
+    """The test is a comparison, not a proximity.
+
+    Both cells are ordinary parallelograms and neither is near the prime
+    meridian, so no earlier guard sees them. What decides is that the route
+    out through each cell's own last column costs less than the reading
+    through the prime meridian, which for these pairs runs into the
+    thousands against an oracle distance of two or three.
+    """
+    assert itacart.cell_shape(origin) == "parallelogram"
+    assert itacart.cell_shape(destination) == "parallelogram"
+    with pytest.raises(DomainError, match="antimeridian seam"):
+        itacart.grid_distance(origin, destination, metric)
+
+
+def test_the_antimeridian_refusal_spares_pairs_near_the_prime_meridian() -> None:
+    """The control. A refusal by proximity would have taken these too."""
+    assert itacart.grid_distance("NE(0500/0300)", "NW(0500/0300)") == 500
+    assert itacart.grid_distance("NE(0001/0000)", "NW(0001/0001)", "manhattan") == 2
+
+
+# --------------------------------------------------------------------------
+# A decision whose boundary has to fail out loud
+# --------------------------------------------------------------------------
+
+#: Trapezoids whose refinement grid is not square, with the child count each
+#: one actually has. Enumerated across four rows rather than sampled: row 300
+#: has three children and none spelled elsewhere, so a test written from one
+#: row would have described the wrong thing.
+TRAPEZOID_ROWS = ((0, 5, 1), (300, 3, 0), (600, 4, 1), (900, 4, 1))
+
+
+@pytest.mark.parametrize("row,children,foreign", TRAPEZOID_ROWS)
+def test_a_trapezoid_carries_the_lattice_but_not_the_refinement_grid(
+    row: int, children: int, foreign: int
+) -> None:
+    """Where "a trapezoid is an ordinary parallelogram" stops being true.
+
+    It is true of position: a trapezoid's children sit exactly where the
+    parallelogram recursion puts them. It is false of the refinement grid,
+    and this test fails if anyone extends the decision that far. A trapezoid
+    keeps only the codes its clipped area still reaches, so the child count
+    is not the square of the side, and on three of these four rows one child
+    is spelled under the *next* resolution-1 column.
+    """
+    trapezoid = f"NE({topology._last_column('NE', row):04d}/{row:04d})"
+    assert itacart.cell_shape(trapezoid) == "trapezoid"
+
+    found = list(itacart.get_children(trapezoid))[0]
+    assert len(found) == children
+
+    outside = [
+        child
+        for child in found
+        if itacart.index.split_components(child)[:-1]
+        != itacart.index.split_components(trapezoid)
+    ]
+    assert len(outside) == foreign
+    assert (len(found) != topology._grid_side(2) ** 2) or foreign, (
+        "a trapezoid whose children were a full square grid all spelled "
+        "under it would make the decision safe to extend, and none is"
+    )
+
+
+# --------------------------------------------------------------------------
+# The cell that closes a hemisphere
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("cap", ("NE(0000/1000)", "SE(0000/1000)"))
+def test_the_polar_cap_has_one_way_out(cap: str) -> None:
+    """Why the cap is reduced rather than measured.
+
+    Three cells touch it and two are trapezoids of the last column, which
+    this measure does not step on. One contact remains, so the distance
+    from the cap is one more than the distance from that cell -- a cut of
+    the graph at a single vertex, not a route chosen among several.
+    """
+    contacts = topology._touching(cap, "chebyshev")
+    free = [c for c in contacts if itacart.cell_shape(c) != "trapezoid"]
+    assert len(contacts) == 3
+    assert free == [topology._polar_equatorward_triangle(cap)]
+    assert itacart.cell_shape(free[0]) == "triangle"
+
+
+@pytest.mark.parametrize(
+    "cap,other,steps",
+    (
+        ("NE(0000/1000)", "NE(0003/0998)", 3),
+        ("NE(0000/1000)", "NW(0003/0998)", 3),
+        ("SE(0000/1000)", "SE(0003/0998)", 3),
+        ("SE(0000/1000)", "SW(0003/0998)", 3),
+        ("NE(0000/1000)", "NE(0000/0999)", 1),
+    ),
+)
+def test_the_reduction_reads_the_cap_as_search_does(
+    cap: str, other: str, steps: int
+) -> None:
+    """Both directions, against the oracle that skips trapezoids.
+
+    Read without the reduction these came out one short, which is the
+    direction that names a path nobody can walk.
+    """
+    assert itacart.grid_distance(cap, other, "chebyshev") == steps
+    assert itacart.grid_distance(other, cap, "chebyshev") == steps
+
+
+@pytest.mark.parametrize("cap", ("NE(0000/1000)", "SE(0000/1000)"))
+def test_no_manhattan_path_leaves_the_polar_cap(cap: str) -> None:
+    """The one contact is a shared vertex, and a vertex is not a step.
+
+    Returning a number here would name a walk that does not exist. The cap
+    is still zero steps from itself, which is not a path.
+    """
+    assert not [
+        c
+        for c in topology._touching(cap, "manhattan")
+        if itacart.cell_shape(c) != "trapezoid"
+    ]
+    with pytest.raises(DomainError, match="closes its hemisphere"):
+        itacart.grid_distance(cap, "NE(0001/0998)", "manhattan")
+    assert itacart.grid_distance(cap, cap, "manhattan") == 0
+
+
+#: What the reduction does not reach, pinned as numbers. Refining the cap
+#: destroys the property the reduction rests on: at resolution 2 it has three
+#: contacts free of trapezoids and at resolution 3 it has eight, so there is
+#: no single vertex to cut and the generic path measures it instead.
+DEEP_CAP_RESIDUE = (
+    ("NE(0000/1000(1))", "NE(0002/0999(1))", 3, 2),
+    ("NE(0000/1000(1))", "NW(0002/0999(1))", 3, 2),
+    ("SE(0000/1000(1))", "SE(0002/0999(1))", 3, 2),
+    ("NE(0000/1000(1(A1)))", "NE(0000/1000(1(A4)))", 2, 3),
+    ("NE(0000/1000(1(A1)))", "NE(0000/1000(1(D1)))", 2, 3),
+)
+
+
+@pytest.mark.parametrize("origin,destination,true,measured", DEEP_CAP_RESIDUE)
+def test_a_refined_cap_is_still_read_by_the_generic_path(
+    origin: str, destination: str, true: int, measured: int
+) -> None:
+    """Pinned so that closing it turns this red, in both directions.
+
+    Note the sign changes with depth: resolution 2 reads one short and
+    resolution 3 one long. Two defects, not one, and a fix aimed at either
+    alone will move this test.
+    """
+    assert itacart.grid_distance(origin, destination, "chebyshev") == measured
+    assert true != measured
+
+
+@pytest.mark.parametrize("resolution", (2, 3))
+def test_a_refined_cap_is_not_treated_as_a_cap(resolution: int) -> None:
+    """The restriction to resolution 1 is the measurement, not a shortcut."""
+    cap = "NE(0000/1000)"
+    for _ in range(resolution - 1):
+        cap = [
+            c
+            for c in list(itacart.get_children(cap))[0]
+            if itacart.index.split_components(c)[:-1]
+            == itacart.index.split_components(cap)
+        ][0]
+    assert itacart.get_resolution(cap) == resolution
+    assert not topology._is_polar_cap(cap)
+    assert topology._is_polar_cap("NE(0000/1000)")
