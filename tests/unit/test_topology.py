@@ -726,14 +726,18 @@ def test_grid_distance_agrees_with_the_disk_it_would_take_to_reach() -> None:
                     )
 
 
-def test_grid_distance_is_refused_across_quadrants() -> None:
-    """The declared restriction, and the reason for it.
+def test_grid_distance_measures_the_pair_that_was_once_refused() -> None:
+    """The regression floor for the restriction that was lifted.
 
-    The two cells are adjacent and the disk finds them, so this is a limit of
-    the measure, not of the adjacency.
+    This pair used to raise, and the test that pinned the refusal is kept
+    here as behaviour rather than deleted: the two cells are adjacent, the
+    disk finds them, and the measure now agrees with both instead of
+    declining to answer. The named cell is the meridian triangle of its
+    row, which is the cell both sides of the line share, so one step is the
+    whole distance.
     """
-    with pytest.raises(DomainError, match="different quadrants"):
-        topology.grid_distance("NE(0000/0300)", "NW(0001/0300)")
+    assert topology.grid_distance("NE(0000/0300)", "NW(0001/0300)") == 1
+    assert topology.grid_distance("NE(0000/0300)", "NW(0001/0300)", "manhattan") == 1
     assert topology.are_neighbor_cells("NE(0000/0300)", "NW(0001/0300)")
     assert "NW(0001/0300)" in topology.grid_disk("NE(0000/0300)", 1, "manhattan")
 

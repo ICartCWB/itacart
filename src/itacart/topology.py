@@ -32,6 +32,7 @@ on the anchors or centroids for metric separation.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import lru_cache
 from typing import Literal, cast
 
@@ -666,12 +667,30 @@ def _geometric_candidates(cell: str) -> list[str]:
     window centred on the column alone would miss, and missing it is silent —
     the cell simply loses a neighbour.
 
-    Three quadrants are searched: the cell's own, its mirror across the
-    meridian, and its mirror across the equator. No cell touches the quadrant
-    diagonally opposite.
+    Three quadrants are searched for most cells: the cell's own, its mirror
+    across the meridian, and its mirror across the equator. A fourth, the
+    quadrant diagonally opposite, is searched when the cell's own ring reaches
+    both axes, because then a single vertex of it lies on the point the four
+    quadrants share and the cells meeting there include one on the far side of
+    both.
+
+    That fourth quadrant used to be excluded by an assertion in this
+    docstring, which said no cell touches it. A brute-force scan of every
+    resolution-1 cell within three columns and three rows of the origin, in
+    all four quadrants, falsified it: ``SE(0000/0000)`` and
+    ``NW(0001/0000)`` meet at longitude -0.08983152841195215, latitude 0,
+    which is a vertex both rings carry with identical bits. The scan is
+    ``test_the_corner_triangle_touches_the_opposite_quadrant``.
+
+    The reach is decided by measuring the ring rather than by naming the
+    corner cell. A cell that reaches neither axis, or only one, pays nothing:
+    the fourth quadrant is not searched for it.
     """
     quadrant, _, row = _res1_parts(cell)
-    west, _, east, _ = _ring(cell).bounds
+    west, south, east, north = _ring(cell).bounds
+    quadrants = [quadrant, _ACROSS_MERIDIAN[quadrant], _ACROSS_EQUATOR[quadrant]]
+    if west <= 0.0 <= east and south <= 0.0 <= north:
+        quadrants.append(_ACROSS_MERIDIAN[_ACROSS_EQUATOR[quadrant]])
     # Two readings of the cell's longitude span, kept apart. An extension
     # cell's ring runs past 180 degrees, and the cells below it on an ordinary
     # row are addressed from the other side of the seam, at 360 minus that.
@@ -684,7 +703,7 @@ def _geometric_candidates(cell: str) -> list[str]:
         max(abs(360.0 - abs(west)), abs(360.0 - abs(east))),
     )
     candidates: list[str] = []
-    for other in (quadrant, _ACROSS_MERIDIAN[quadrant], _ACROSS_EQUATOR[quadrant]):
+    for other in quadrants:
         for other_row in (row - 1, row, row + 1):
             if not 0 <= other_row <= _POLAR_ROW:
                 continue
@@ -1032,46 +1051,193 @@ def grid_ring(
     return _shape_result(per_origin, dedupe, flatten, len(atoms) == 1)
 
 
-def _deep_lattice_ij(cell: str) -> tuple[int, int, int]:
-    """A cell's column and row on the lattice of its own resolution.
+def _lattice_descent(cell: str) -> tuple[int, int, bool]:
+    """A cell's place on the lattice of its own resolution, by descent.
 
-    Built by folding each refinement code into the resolution-1 pair: a
-    quaternary level multiplies by two and a quinary one by five, and the
-    code's own column and row are added. The product of those factors is
-    returned as well, because it is how many cells of this resolution fill one
-    resolution-1 cell along each axis, and the distance formula needs it.
+    The reference is the resolution-1 cell and every level below it only
+    subdivides the unit it inherits. Three things vary with the parent and
+    all three are read from the descent itself rather than from the index
+    prefix, which names a quadrant and not a side of the line.
 
-    The lattice is meridian-anchored at resolution 1 and parent-anchored below
-    it, which is why the poleward step moves a column at the top level and
-    none inside a parent. Both are the same geometry; the frames differ.
+    The shear. A poleward step moves one column towards the meridian at
+    every scale, so a child's column is its parent's scaled column plus
+    ``code_column - code_row``. Folding the code in without that term
+    treats the refinement grid as unsheared and measurably misplaces every
+    child on an odd row.
+
+    The orientation. West of the meridian the lattice mirrors and the same
+    term changes sign. A cell of an eastern quadrant can sit wholly west --
+    ``NE(0000/0110(3))`` runs from -0.09119 degrees to zero -- so the sign
+    comes from the running column, not the quadrant.
+
+    The shape. A triangle's twenty-five children pack into rows of nine,
+    seven, five, three and one rather than a five-by-five grid. Measured,
+    the row of a child is ``min(code_row, code_column)`` instead of
+    ``code_row``, the column term is unchanged, and the one child that is
+    itself a triangle is the one whose code has ``code_row`` equal to
+    ``code_column``. That makes the shape arithmetic too: a triangle at
+    resolution 1 is column zero, and below it the diagonal code.
     """
     components = split_components(cell)
-    _, column, row = _res1_parts(join_components(components[:2]))
-    factor = 1
+    quadrant = components[0]
+    column, _, row = components[1].partition("/")
+    x, y = int(column), int(row)
+    if quadrant[1] == "W":
+        x = -x
+    triangular = x == 0
     for depth, code in enumerate(components[2:], start=2):
         side = _grid_side(depth)
         code_column, code_row = _decode(code, side)
-        column, row = column * side + code_column, row * side + code_row
-        factor *= side
-    return column, row, factor
+        towards = -1 if x < 0 else 1
+        y = y * side + (min(code_row, code_column) if triangular else code_row)
+        x = x * side + towards * (code_column - code_row)
+        triangular = triangular and code_row == code_column
+    return x, y, quadrant[0] == "S"
 
 
-def _basis_coordinates(cell: str) -> tuple[int, int]:
-    """Displacement of a cell in the lattice's own basis.
+def _rectified(cell: str) -> tuple[int, int]:
+    """A cell's position in the frame where the lattice is a square grid.
 
     The lattice is spanned by the eastward step ``(1, 0)`` and the poleward
-    step ``(-1, 1)``, so a pair decomposes as ``column + row`` eastward steps
-    and ``row`` poleward ones. Chebyshev distance is the larger of the two
-    magnitudes, Manhattan their sum.
+    step ``(-1, 1)``, and the unimodular map ``(X, Y) -> (X + Y, Y)`` sends
+    those to ``(1, 0)`` and ``(0, 1)``. Integer in and integer out, with an
+    integer inverse: no scale is lost and no float is introduced.
 
-    Below resolution 1 the shear sits at the top level only: a poleward step
-    keeps the column inside a parent and moves one whole resolution-1 column
-    when it leaves. The correction adds that column back for each
-    resolution-1 row crossed, which makes the poleward step cost exactly one
-    at every resolution.
+    Two departures from that plain statement, both measured. The eastward
+    coordinate uses the distance from the meridian rather than a signed
+    column, because west of the line the shear mirrors and ``X + Y`` would
+    read it backwards. And the southern rows continue the northern ones
+    downwards through ``-Y - 1`` rather than through ``-Y``: the equator is
+    a mirror lying between two rows, not through one, so there is no shared
+    row to count twice. Signing the row without the offset leaves an error
+    that grows with the distance from the equator instead of a fixed one.
     """
-    column, row, factor = _deep_lattice_ij(cell)
-    return column + factor * (row // factor), row
+    x, y, southern = _lattice_descent(cell)
+    return abs(x) + y, (-y - 1) if southern else y
+
+
+def _span(here: tuple[int, int], there: tuple[int, int], metric: Metric) -> int:
+    """The metric, read in the rectified frame."""
+    east, pole = abs(there[0] - here[0]), abs(there[1] - here[1])
+    return max(east, pole) if metric == "chebyshev" else east + pole
+
+
+def _seam_row_limit(resolution: int) -> int:
+    """Rows between the equator and the pole at a resolution."""
+    rows = _POLAR_ROW
+    for depth in range(2, resolution + 1):
+        rows *= _grid_side(depth)
+    return rows
+
+
+def _seam(rectified_row: int) -> tuple[int, int]:
+    """The meridian triangle of a rectified row, in the rectified frame.
+
+    Column zero carries one triangle per row and it is the cell both sides
+    of the line share. Its rectified position is ``(row, row)`` north of
+    the equator and ``(-row - 1, row)`` south of it, which is the same
+    statement once the southern rows are counted downwards.
+    """
+    return (rectified_row if rectified_row >= 0 else -rectified_row - 1), rectified_row
+
+
+def _apex(rectified_row: int) -> tuple[int, int]:
+    """The pair of cells that meet at a meridian triangle's apex.
+
+    They face each other across the line one column out from the seam, and
+    the rectified frame gives them the same coordinates because it measures
+    the distance from the meridian rather than a signed column. Enumerated
+    rather than assumed: every contact that crosses the meridian without
+    touching a triangle has the eastern cell at column ``+1``, the western
+    at ``-1`` and no row difference, in both hemispheres and at every
+    resolution measured.
+    """
+    column, row = _seam(rectified_row)
+    return column + 1, row
+
+
+def _rows_to_search(
+    here: tuple[int, int], there: tuple[int, int], resolution: int
+) -> list[tuple[int, int]]:
+    """Bounds of the crossing row, one interval per hemisphere.
+
+    The seam bends at the equator: the column of a seam cell rises with the
+    row to the north and falls with it to the south. Each branch on its own
+    is affine, which is what the search below needs, so the two are searched
+    separately and the better one wins.
+
+    Each interval is clipped to the rows that exist and widened by two
+    around the coordinates that can hold a breakpoint. The minimum of a sum
+    of distances sits at a breakpoint, and every breakpoint is one of the
+    four coordinates.
+    """
+    limit = _seam_row_limit(resolution)
+    reach = [here[0], here[1], there[0], there[1]]
+    low, high = min(reach) - 2, max(reach) + 2
+    intervals = []
+    for first, last in ((0, limit - 1), (-limit, -1)):
+        lower, upper = max(first, low), min(last, high)
+        if lower > upper:
+            lower = upper = first if low > last else last
+        intervals.append((lower, upper))
+    return intervals
+
+
+def _minimise(cost: Callable[[int], int], lower: int, upper: int) -> int:
+    """Least value of a discretely convex cost over an integer interval.
+
+    Each cost below is a sum of maxima of absolute affine functions of the
+    row, so it is convex, its breakpoints are integers, and a ternary search
+    finds the minimum in a logarithmic number of evaluations. Measured
+    against exhaustive enumeration over the same intervals, the two agree
+    everywhere.
+    """
+    while upper - lower > 2:
+        left = lower + (upper - lower) // 3
+        right = upper - (upper - lower) // 3
+        if cost(left) <= cost(right):
+            upper = right
+        else:
+            lower = left
+    return min(cost(row) for row in range(lower, upper + 1))
+
+
+def _meridian_distance(
+    origin: str, destination: str, metric: Metric, resolution: int
+) -> int:
+    """Steps between cells on opposite sides of the meridian.
+
+    Two structures cross the line and both are needed. One goes through the
+    shared triangle of column zero; the other steps directly between the
+    cells that meet at its apex. Measured on every pair of an exhaustive
+    neighbourhood at three resolutions and in both hemispheres, neither
+    family alone reproduces the shortest path and their minimum always
+    does: pairs exist that only the triangle reaches, and pairs exist where
+    the triangle is unavoidable, so the apex cannot stand alone either.
+
+    Under Manhattan the apex is not available at all. The two cells there
+    share a single point, and a vertex is not a Manhattan step, so charging
+    one for it would report a path that cannot be walked.
+    """
+    here, there = _rectified(origin), _rectified(destination)
+
+    def through_seam(row: int) -> int:
+        point = _seam(row)
+        return _span(here, point, metric) + _span(point, there, metric)
+
+    def through_apex(row: int) -> int:
+        point = _apex(row)
+        return _span(here, point, metric) + 1 + _span(point, there, metric)
+
+    best = None
+    for lower, upper in _rows_to_search(here, there, resolution):
+        candidates = [_minimise(through_seam, lower, upper)]
+        if metric == "chebyshev":
+            candidates.append(_minimise(through_apex, lower, upper))
+        found = min(candidates)
+        best = found if best is None else min(best, found)
+    assert best is not None
+    return best
 
 
 def grid_distance(origin: str, destination: str, metric: Metric = "chebyshev") -> int:
@@ -1080,11 +1246,16 @@ def grid_distance(origin: str, destination: str, metric: Metric = "chebyshev") -
     Not a geodesic distance. Use :func:`itacart.geodesy.inverse_geodesic` on
     the anchors or centroids for metric separation.
 
-    Defined at every resolution, within one quadrant. Quadrant mirroring flips
-    the sense of the shear, so the poleward step moves one column west in the
-    northern hemisphere and one column east in the southern: no single basis
-    measures both, and a formula that ignored this would be wrong by twice the
-    row difference without ever breaking symmetry.
+    Defined at every resolution. The lattice mirrors at the prime meridian
+    and again at the equator, so no single basis measures both sides of
+    either: the position is built by descent from the resolution-1 cell and
+    read in a rectified frame, and the meridian crossing is resolved by
+    minimising over the row at which the line is crossed.
+
+    Which side of the meridian a cell lies on comes from that descent and
+    never from its quadrant prefix. A cell of an eastern quadrant can sit
+    wholly west of the line, and two cells sharing a prefix can face each
+    other across it.
 
     Args:
         origin: Atomic index of the first cell.
@@ -1097,7 +1268,8 @@ def grid_distance(origin: str, destination: str, metric: Metric = "chebyshev") -
     Raises:
         ResolutionError: If the cells sit at different resolutions, or are
             quadrants.
-        DomainError: If the two cells sit in different quadrants.
+        DomainError: If a path cannot be resolved across the boundary
+            between the cells.
         ValueError: If ``metric`` is unknown.
     """
     if metric not in ("chebyshev", "manhattan"):
@@ -1111,16 +1283,11 @@ def grid_distance(origin: str, destination: str, metric: Metric = "chebyshev") -
         )
     if get_resolution(origin) < 1:
         raise ResolutionError("a quadrant has no position on the lattice")
-    if split_components(origin)[0] != split_components(destination)[0]:
-        raise DomainError(
-            f"{origin!r} and {destination!r} sit in different quadrants; the "
-            "lattice basis mirrors across the meridian and the equator, so no "
-            "single basis measures both"
-        )
-    here = _basis_coordinates(origin)
-    there = _basis_coordinates(destination)
-    east, pole = abs(there[0] - here[0]), abs(there[1] - here[1])
-    return max(east, pole) if metric == "chebyshev" else east + pole
+    resolution = get_resolution(origin)
+    here, there = _lattice_descent(origin), _lattice_descent(destination)
+    if (here[0] > 0) == (there[0] > 0) or here[0] == 0 or there[0] == 0:
+        return _span(_rectified(origin), _rectified(destination), metric)
+    return _meridian_distance(origin, destination, metric, resolution)
 
 
 def are_neighbor_cells(origin: str, destination: str) -> bool:
