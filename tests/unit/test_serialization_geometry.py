@@ -506,3 +506,62 @@ def test_a_reserved_refinement_code_in_a_vertex_is_refused() -> None:
     blob[17] |= 0b0111_1100  # the five-bit resolution-3 field of vertex 0
     with pytest.raises(MalformedBlobError, match="reserved at resolution 3"):
         gb.validate_geometry(bytes(blob))
+
+
+# --------------------------------------------------------------------------
+# Ring orientation
+# --------------------------------------------------------------------------
+
+
+def test_canonicalisation_rotates_a_ring_but_never_reverses_it() -> None:
+    """Rotating is a change of spelling; reversing is a change of meaning.
+
+    The header declares one transformation, and the encoder applies
+    exactly that one. A reversed ring is a different geometry and stays
+    one all the way to the hash.
+    """
+    straight = gb.encode_geometry([RING], "POLYGON", resolution=3)
+    rotated = gb.encode_geometry([RING[1:] + RING[:1]], "POLYGON", resolution=3)
+    reversed_ring = gb.encode_geometry([list(reversed(RING))], "POLYGON", resolution=3)
+    assert rotated == straight
+    assert reversed_ring != straight
+    assert gb.geometry_hash(reversed_ring) != gb.geometry_hash(straight)
+
+
+def test_the_exterior_is_the_first_ring_not_the_one_wound_a_certain_way() -> None:
+    """Which ring is a hole is carried by part order, not by winding.
+
+    Worth pinning because the docstring points at the counter-clockwise
+    convention, and a reader could take that to mean the format inspects
+    direction. It does not: it records the role from the position and
+    preserves the direction untouched.
+    """
+    normal = gb.encode_geometry(
+        [RING, HOLE], "POLYGON", resolution=3, canonicalize=False
+    )
+    swapped = gb.encode_geometry(
+        [HOLE, RING], "POLYGON", resolution=3, canonicalize=False
+    )
+    assert normal != swapped
+    assert gb.decode_geometry(normal)["rings"] == [RING, HOLE]
+    assert gb.decode_geometry(swapped)["rings"] == [HOLE, RING]
+
+    role_bits = gb.RING_ROLES.index("EXTERIOR"), gb.RING_ROLES.index("INTERIOR")
+    assert role_bits == (0, 1)
+
+
+def test_reversing_a_ring_survives_into_the_bytes_and_out_again() -> None:
+    """The winding a caller supplies is the winding a reader gets back."""
+    backwards = list(reversed(RING))
+    blob = gb.encode_geometry([backwards], "POLYGON", resolution=3, canonicalize=False)
+    assert gb.decode_geometry(blob)["rings"][0] == backwards
+
+
+def test_the_derived_tree_drops_the_winding_with_everything_else() -> None:
+    """Two windings cover the same ground, so they share one tree."""
+    forward = gb.encode_geometry([RING], "POLYGON", resolution=3, canonicalize=False)
+    backward = gb.encode_geometry(
+        [list(reversed(RING))], "POLYGON", resolution=3, canonicalize=False
+    )
+    assert forward != backward
+    assert gb.geometry_to_tree(forward) == gb.geometry_to_tree(backward)

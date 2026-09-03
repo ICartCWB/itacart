@@ -453,8 +453,18 @@ def recompose_to_prefix_form(index: str) -> str:
 def encode_tree(index: str) -> bytes:
     """Encode a compositional index as a TreeBlob.
 
-    The index is recomposed into canonical prefix form first, so
-    equivalent spellings produce identical bytes.
+    Canonicalisation is the encoder's job, not the caller's. The index is
+    recomposed into canonical prefix form here, so equivalent spellings
+    produce identical bytes and calling
+    :func:`recompose_to_prefix_form` beforehand is redundant rather than
+    required. It stays public because two of the format's properties are
+    stated in terms of it and because a reader verifying a hash needs to
+    name the form the bytes are in.
+
+    Note that :func:`itacart.normalize` is *not* that form: it collapses
+    a complete sibling set into its parent, which preserves the region
+    while changing the leaf set. Passing a normalised index encodes a
+    different, smaller cell set, on purpose.
 
     Args:
         index: Compositional index string.

@@ -38,6 +38,11 @@ ordered.
 public, because two of the format's properties are stated in terms of
 it.
 
+**The encoder canonicalises; the caller need not.** {func}`itacart.encode_tree`
+recomposes its input before emitting bytes, so calling the rewrite first
+is redundant rather than required. Nothing is lost by doing it, and
+nothing is gained.
+
 It is **not** {func}`itacart.normalize`. Normalisation collapses a
 complete sibling set into its parent, which preserves the region while
 changing the leaf set. A blob's identity is its leaf set, so the codec

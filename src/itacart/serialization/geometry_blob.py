@@ -387,6 +387,26 @@ def encode_geometry(
 ) -> bytes:
     """Encode ordered vertex rings as a GeometryBlob.
 
+    Ring orientation is significant and is preserved exactly.
+    Canonicalisation may rotate a closed ring to its least starting
+    vertex; it never reverses one, because rotating is a change of
+    spelling and reversing is a change of meaning.
+
+    Which ring is the exterior and which are holes is carried here by
+    **part order** — the first ring of a component is its exterior — and
+    not by reading the winding. Winding is preserved to the byte all the
+    same, because many producers and consumers use direction to carry
+    that same distinction, and a ring handed on reversed may be read
+    downstream as the opposite kind of ring. The common convention is
+    counter-clockwise for an exterior boundary and clockwise for a hole::
+
+        exterior = [A, B, C, D]   # counter-clockwise
+        hole     = [E, H, G, F]   # clockwise: E, F, G, H reversed
+
+    Reversing either sequence changes its identity: the bytes differ and
+    so does the hash. Nothing here reverses a ring to make it agree with
+    a convention, and nothing here checks that it does.
+
     Args:
         rings: Rings as lists of atomic index strings, exterior first.
             MULTIPOLYGON nests one level deeper, as a list of polygons,
@@ -415,6 +435,18 @@ def encode_geometry(
         >>> blob = encode_geometry([["NE(0625/0451)"]], "POINT", resolution=1)
         >>> read_geometry_type(blob)
         'POINT'
+
+        Rotation is a spelling; reversal is not:
+
+        >>> ring = ["NE(0625/0451(1))", "NE(0625/0451(2))", "NE(0625/0451(3))"]
+        >>> encode_geometry([ring], resolution=2) == encode_geometry(
+        ...     [ring[1:] + ring[:1]], resolution=2
+        ... )
+        True
+        >>> encode_geometry([ring], resolution=2) == encode_geometry(
+        ...     [list(reversed(ring))], resolution=2
+        ... )
+        False
     """
     from ..geometry import canonicalize_rings
 
@@ -539,6 +571,9 @@ def _read_header(blob: bytes) -> "dict[str, Any]":
 
 def decode_geometry(blob: bytes) -> "dict[str, Any]":
     """Decode a GeometryBlob into rings and profile metadata.
+
+    Rings come back in the order they were written and with the winding
+    they were given. The exterior of a component is its first ring.
 
     Args:
         blob: The binary blob.
@@ -749,6 +784,10 @@ def geometry_hash(blob: bytes) -> bytes:
     same geometry written from a different starting vertex hashes
     differently.
 
+    Canonicalisation covers the starting vertex and nothing else, so a
+    ring and its reverse are two geometries and hash apart. That is the
+    intended reading: direction is meaning, not spelling.
+
     Args:
         blob: The binary blob.
 
@@ -768,9 +807,10 @@ def geometry_to_tree(blob: bytes) -> bytes:
     """Derive the TreeBlob of a GeometryBlob's vertex set.
 
     One-way by construction. The TreeBlob is determined by the *set* of
-    vertices alone, so distinct sequences, ring topologies and edge
-    models over the same vertices all yield the same TreeBlob. Coverage
-    is preserved, identity is not.
+    vertices alone, so distinct sequences, ring topologies, windings and
+    edge models over the same vertices all yield the same TreeBlob.
+    Coverage is preserved, identity is not: a ring and its reverse cover
+    the same ground and arrive here as one tree.
 
     Args:
         blob: A GeometryBlob.

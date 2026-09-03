@@ -126,10 +126,26 @@ rings are rotated to their least starting vertex, so the same ring
 written from a different vertex canonicalises to the same sequence.
 {func}`itacart.canonicalize_rings` performs it.
 
-**Winding is not touched.** A ring's direction distinguishes an exterior
-from a hole and is information the caller put there; rotating is a
-change of spelling, reversing would be a change of meaning. The header
-declares one transformation and the encoder applies exactly that one.
+**Winding is not touched.** Rotating is a change of spelling; reversing
+would be a change of meaning. The header declares one transformation and
+the encoder applies exactly that one, so a ring and its reverse are two
+geometries and hash apart.
+
+Which ring is the exterior and which are holes is carried by **part
+order** -- the first ring of a component is its exterior -- and not by
+reading the direction. Direction is preserved to the byte all the same,
+because many producers and consumers use it to carry that same
+distinction, and a ring handed on reversed may be read downstream as the
+opposite kind of ring. The common convention is counter-clockwise for an
+exterior boundary and clockwise for a hole:
+
+```
+exterior = [A, B, C, D]   # counter-clockwise
+hole     = [E, H, G, F]   # clockwise: E, F, G, H reversed
+```
+
+Nothing here reverses a ring to make it agree with that convention, and
+nothing here checks that it does.
 
 {func}`itacart.geometry_hash` returns `keccak256` of the blob. Not
 SHA3-256: the two differ in their padding byte, and substituting one for
