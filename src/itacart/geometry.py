@@ -29,12 +29,13 @@ count on the lattice is a cell count on the ellipsoid.
 Scope
 -----
 
-Filling is defined on the parallelogram interior. Geometry reaching the
-prime-meridian column, the last lattice column of its row, or the polar row
-is refused rather than filled, because in those three families the cell is
-not the sheared square the descent tests and the containment chain of
-:func:`polyfill` would no longer be sound. See :func:`polyfill` for the
-exact predicate.
+Filling runs on the parallelogram interior and on the prime-meridian
+column. The column holds triangles, not the sheared square the ordinary
+descent tests, so it has a descent of its own: see
+:func:`_fill_meridian_node`. Geometry reaching the last lattice column of
+its row or the polar row is still refused rather than filled, because
+there the cell is not the square either and no second descent replaces
+it. See :func:`polyfill` for the exact predicate.
 
 Provenance: ``itacart_core/cell_filling.py``, ``densification.py``,
 ``geometry_blob.py`` (``canonicalize_rings``) and
@@ -50,7 +51,7 @@ import math
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
-from typing import TYPE_CHECKING, Callable, Literal, Sequence, TypeVar
+from typing import TYPE_CHECKING, Callable, Final, Literal, Sequence, TypeVar
 
 from .boundary import crosses_antemeridian, last_lattice_column
 from .cells import _ROW_LETTERS, cell_to_anchor, geo_to_cell
@@ -58,6 +59,7 @@ from .constants import (
     DESCENT_CLOSE,
     DESCENT_OPEN,
     MAX_RESOLUTION,
+    QUADRANTS,
     RES1_DIGITS,
     RES1_SEPARATOR,
     SIBLING_SEPARATOR,
@@ -141,6 +143,110 @@ what makes a cross-quadrant geometry impossible to fill.
 _PLANE_LIMIT: float = 4.0e7
 """Half-width of the clipping box, in metres: past any plane coordinate."""
 
+_NON_AREAL: Final[frozenset[str]] = frozenset(
+    {"Point", "LineString", "MultiPoint", "MultiLineString"}
+)
+"""Geometry types a quadrant clip can produce that carry no area.
+
+From an areal input such a piece means the geometry touched the axis
+without crossing it. From a point or a line it means the feature itself,
+which is why the two cases cannot share one rule.
+"""
+
+
+_EXTENSION_EDGE_SEGMENTS: Final[int] = 4096
+"""Segments along a zone window's meridian edges.
+
+A meridian is a curve on the sinusoidal plane, so the straight edge of a
+box in degrees projects to a chord that misses it badly: measured, 26.6 km
+over Fiji's latitude band and 20.2 km over Chukotka's, more than two
+resolution-1 cells. The chord error falls with the square of the segment
+count, so this many puts it under a millimetre.
+"""
+
+
+@lru_cache(maxsize=1)
+def _extension_windows() -> tuple["BaseGeometry", ...]:
+    """The region each extension zone lifts past the antemeridian.
+
+    Built from the rows the zone is realized on, **not** from its declared
+    degrees. ``ZONE_ROWS`` rounds the declared band outward to whole rows
+    -- Fiji is declared -21.5 to -15.5 and realized on -21.5141 to
+    -15.4610 -- and :func:`itacart.cells.geo_to_cell` shifts a position by
+    the rows. A window drawn on the declared numbers would leave a strip
+    up to a row wide where the point function shifts and the fill does not.
+
+    Only the meridian edges are densified. A parallel is a straight line on
+    the plane, because the ordinate depends on latitude alone.
+    """
+    from shapely.geometry import Polygon
+
+    from .boundary import ZONE_ROWS
+    from .constants import ANTEMERIDIAN_LON, EXTENSION_ZONES
+    from .geodesy import sinusoidal_to_geodetic
+
+    windows: list["BaseGeometry"] = []
+    for name, (first, last) in ZONE_ROWS.items():
+        spec = EXTENSION_ZONES[name]
+        sign = 1.0 if spec.quadrant[0] == "N" else -1.0
+        low, high = sorted(
+            sinusoidal_to_geodetic(0.0, sign * ordinate)[1]
+            for ordinate in (first * _L1, (last + 1) * _L1)
+        )
+        steps = _EXTENSION_EDGE_SEGMENTS
+        span = high - low
+        limit = [
+            (spec.lon_limit, low + span * step / steps) for step in range(steps + 1)
+        ]
+        line = [
+            (-ANTEMERIDIAN_LON, high - span * step / steps) for step in range(steps + 1)
+        ]
+        windows.append(Polygon(limit + line))
+    return tuple(windows)
+
+
+def _lift_extensions(geometry: "BaseGeometry") -> "BaseGeometry":
+    """Move the extension-zone parts of a geometry past the antemeridian.
+
+    Two zones let a row's domain run past 180 degrees so that land beyond
+    the line is reached from the near side rather than by crossing it.
+    :func:`itacart.cells.geo_to_cell` honours that by adding 360 degrees to
+    a position inside a zone, which puts it in the eastern quadrant; the
+    fill projected at the literal longitude instead, so the same ground
+    landed in the **western** quadrant at a column past the end of its row,
+    and every cell it named there failed :func:`itacart.is_valid_cell`.
+
+    The lift is the areal form of the same rule. A geometry that only
+    partly enters a zone is cut at the zone's own edge and lifted in part,
+    because the limit is where the extension stops: a position at
+    ``lon_limit`` is lifted and one just east of it is not.
+
+    Runs after densification, so the lifted part keeps the vertices the
+    densifier gave it, and the cut edge follows the meridian by taking the
+    window's own vertices rather than a straight line in degrees.
+    """
+    from shapely.affinity import translate
+    from shapely.ops import unary_union
+
+    from .constants import ANTEMERIDIAN_LON
+
+    lifted: list["BaseGeometry"] = []
+    remainder = geometry
+    areal = geometry.geom_type in {"Polygon", "MultiPolygon"}
+    for window in _extension_windows():
+        inside = remainder.intersection(window)
+        if inside.is_empty:
+            continue
+        if areal and inside.geom_type in _NON_AREAL:
+            continue  # the geometry touches the zone without entering it
+        lifted.append(translate(inside, xoff=2.0 * ANTEMERIDIAN_LON))
+        remainder = remainder.difference(window)
+    if not lifted:
+        return geometry
+    if not remainder.is_empty:
+        lifted.append(remainder)
+    return unary_union(lifted)
+
 
 def _check_resolution(resolution: int) -> None:
     """Reject a resolution outside 1..13."""
@@ -219,10 +325,30 @@ def _quadrant_pieces(plane: "BaseGeometry") -> list[tuple[str, "BaseGeometry"]]:
 
     A geometry lying in one quadrant yields one piece, which is the
     ordinary case. A geometry straddling an axis yields two or four, each
-    filled independently: the half-open convention already awards every
-    axis position to exactly one cell, so the parts do not double count.
+    filled independently.
+
+    **The windows are closed and the convention is not.** Shapely can only
+    clip with a closed box, so all four windows carry their own boundary
+    and an axis position lands in two of them, or in four at the origin.
+    :func:`itacart.cells.geo_to_cell` awards that position to exactly one
+    cell -- the eastern and northern side, measured -- so the clip has to
+    be brought back to the same rule or the two functions disagree about
+    who owns the axis.
+
+    Two different corrections are needed because the leak takes two forms:
+
+    * An areal geometry that only touches an axis leaves a degenerate
+      piece on the far side, which is dropped.
+    * A point or a line **on** the axis is not degenerate; it is the whole
+      feature, and both windows keep all of it. Each quadrant therefore
+      subtracts the axes it does not own. The subtraction is exact rather
+      than approximate: a point on the line vanishes, a line along it
+      vanishes, and a line merely crossing it keeps its full length.
+
+    Areal pieces are left alone because subtracting a line from a polygon
+    is a no-op on the closure, so the cost would buy nothing.
     """
-    from shapely.geometry import box
+    from shapely.geometry import LineString, box
 
     out: list[tuple[str, "BaseGeometry"]] = []
     limit = _PLANE_LIMIT
@@ -232,13 +358,25 @@ def _quadrant_pieces(plane: "BaseGeometry") -> list[tuple[str, "BaseGeometry"]]:
         "SE": box(0.0, -limit, limit, 0.0),
         "SW": box(-limit, -limit, 0.0, 0.0),
     }
+    meridian = LineString([(0.0, -limit), (0.0, limit)])
+    equator = LineString([(-limit, 0.0), (limit, 0.0)])
+    disowned: dict[str, tuple["BaseGeometry", ...]] = {
+        "NE": (),
+        "NW": (meridian,),
+        "SE": (equator,),
+        "SW": (meridian, equator),
+    }
     for quadrant, window in windows.items():
         piece = plane.intersection(window)
         if piece.is_empty:
             continue
-        if piece.geom_type in {"Point", "LineString", "MultiPoint", "MultiLineString"}:
+        if piece.geom_type in _NON_AREAL:
             if plane.geom_type in {"Polygon", "MultiPolygon"}:
                 continue  # a polygon touching the axis, not crossing it
+            for axis in disowned[quadrant]:
+                piece = piece.difference(axis)
+            if piece.is_empty:
+                continue
         out.append((quadrant, piece))
     return out
 
@@ -254,16 +392,21 @@ def _to_lattice(piece: "BaseGeometry", quadrant: str) -> "BaseGeometry":
 def _check_addressable(quadrant: str, column: int, row: int) -> None:
     """Refuse a resolution-1 cell that is not an ordinary parallelogram.
 
-    Three families are refused, and the reason is the same in all three:
-    the descent tests a sheared square, and in these families the cell is
-    not that square.
+    Two families are refused, and the reason is the same in both: the
+    descent tests a sheared square, and in these families the cell is not
+    that square.
 
-    * ``column == 0`` is the prime-meridian column, whose cells are
-      triangles spanning both sides of the line.
     * the last lattice column of a row absorbs the strip between itself
       and the domain border, so it is wider than the square.
     * the polar row is clipped by the pole and carries a fraction of the
       nominal area.
+
+    **Column 0 is not among them.** The prime-meridian column holds
+    triangles, which are not squares either, but they are filled by
+    :func:`_fill_meridian_node` rather than refused. Negative columns
+    never arrive: :func:`_base_cells` drops them, because a square west
+    of the meridian in an eastern frame is an artefact of a closed
+    clipping window and names no cell.
 
     The screen is applied at resolution 1 and is therefore conservative:
     a geometry inside base column 500 cannot reach a border-absorbing
@@ -277,12 +420,6 @@ def _check_addressable(quadrant: str, column: int, row: int) -> None:
     the polar branch would never be reached at all. Measured: the branch
     was unreachable until the two were swapped.
     """
-    if column <= 0:
-        raise NonExistentCellError(
-            f"row {row} column {column} of quadrant {quadrant} is the "
-            "prime-meridian column, whose cells are triangles; filling is "
-            "defined on the parallelogram interior"
-        )
     last = last_lattice_column(quadrant, row, _L1)
     if last <= 0:
         raise DomainError(
@@ -307,7 +444,7 @@ def _anomalous_band(
 ) -> "BaseGeometry":
     """The part of a resolution-1 cell that is still anomalous at ``side``.
 
-    The three families are bounded by lines of constant ``w = u - v`` or
+    The two families are bounded by lines of constant ``w = u - v`` or
     of constant ``v``, so each one is a band and their union is what the
     screen has to protect. Returned in lattice coordinates.
 
@@ -317,8 +454,8 @@ def _anomalous_band(
     ``(u0 - v0) / s``, which reduces to ``u_index - row`` at resolution
     1. From it, ``column`` of a child is ``column * d + (c - r)`` with
     ``c`` and ``r`` in ``[0, d)``, so a node with a positive column never
-    fathers one at column zero: the meridian family does not spread, and
-    neither do the other two.
+    fathers one at column zero: neither family spreads toward the
+    meridian.
 
     Each band is drawn one cell side wide, which is an outer bound on a
     family that is really a staircase of single cells. Refusing the
@@ -345,13 +482,28 @@ def _anomalous_band(
             ]
         )
 
-    if column <= 0:
-        bands.append(by_column(-reach, side))
-
     top_row = int(math.floor((v0 + _L1 - side / 2.0) / side))
     last_at_top = last_lattice_column(quadrant, top_row, side)
     if last_at_top > 0:
-        bands.append(by_column(last_at_top * side, reach))
+        # A square of side ``s`` at column ``c`` spans ``u - v`` over
+        # ``[(c - 1) s, (c + 1) s]``, so every square from the last column
+        # outward lies at ``u - v >= (last - 1) s``. Derived rather than
+        # chosen, and the two ends of it are what the screen needs:
+        #
+        # * at resolution 1 that threshold is the base cell's own lower
+        #   edge, so the absorbing cell is refused whole rather than
+        #   emitted whenever the geometry happens to sit on its inner
+        #   side;
+        # * at a finer target it is a strip beside the border, which is
+        #   what lets the rest of the base cell still be filled.
+        #
+        # The outward end is drawn past the cell rather than one band
+        # wide. A column beyond the last is not one cell out but as many
+        # as the border strip is wide -- two, over Chukotka -- and a band
+        # that stopped short of them left an empty intersection, so the
+        # escape fired and the fill named cells that do not exist.
+        lower = (last_at_top - 1) * side
+        bands.append(by_column(lower, max(lower, (column + 2) * _L1)))
     else:
         bands.append(cell)
 
@@ -387,9 +539,10 @@ def _base_cells(
     refuse a geometry for a neighbouring column it never touches.
 
     The screen runs at ``resolution``, not at resolution 1. A base cell
-    of one of the three families holds mostly ordinary descendants --
-    measured, 90 of 100 for the meridian, 107 of 114 for the last
-    column, 139 of 144 for the polar row -- and screening the family at
+    of one of the refused families holds mostly ordinary descendants --
+    measured, 107 of 114 for the last column and 139 of 144 for the
+    polar row, and 90 of 100 for the meridian before that family left
+    the screen entirely -- and screening the family at
     resolution 1 refused all of them along with the few that deserved
     it. That is a band up to ten kilometres wide standing in for an
     anomaly one cell wide: a thousand times too much at resolution 7 and
@@ -414,6 +567,13 @@ def _base_cells(
             if not prepared.intersects(box(u0, v0, u0 + _L1, v0 + _L1)):
                 continue
             column = u_index - row
+            if column <= 0:
+                # A negative column is a square west of the meridian read
+                # in an eastern frame: the clipping window is closed, so
+                # such a square touches the piece at one corner and names
+                # no cell. Column 0 names the meridian triangle, which
+                # _fill_meridian_node walks in the plane rather than here.
+                continue
             try:
                 _check_addressable(quadrant, column, row)
             except (DomainError, NonExistentCellError):
@@ -602,7 +762,285 @@ def _fill_node(
                 parts.append(fragment)
     if not parts:
         return None
+    if compact and _folds_into_its_parent(parts, divisor):
+        return code
     return f"{code}{DESCENT_OPEN}{SIBLING_SEPARATOR.join(parts)}{DESCENT_CLOSE}"
+
+
+def _folds_into_its_parent(parts: list[str], divisor: int) -> bool:
+    """Whether every child came back whole, so the parent stands for them.
+
+    Compacting has to mean the same thing as compacting the uniform fill
+    afterwards, so a node folds when **all of its children were kept**,
+    not only when the node itself lies wholly inside the geometry.
+    Wholly inside is a sufficient condition and the descent still takes
+    it as a shortcut; it is not a necessary one, and treating it as one
+    left the compaction incomplete -- measured, 15 per cent more cells
+    than the same fill compacted afterwards under ``center`` and 80 per
+    cent more under ``intersects``.
+
+    A child came back whole when its fragment carries no descent of its
+    own: either it is a leaf at the target resolution, or it is itself a
+    fold. Sibling completeness is only decidable here, once every child
+    has answered, which is why the test cannot be moved earlier.
+    """
+    return len(parts) == divisor * divisor and not any(
+        DESCENT_OPEN in part for part in parts
+    )
+
+
+def _meridian_triangle(base: float, y_sign: float, side: float) -> "BaseGeometry":
+    """Plane ring of one prime-meridian triangle, from its base and side.
+
+    The same three points :func:`itacart.boundary._nominal_ring` builds:
+    a triangle of double width centred on the line, apex poleward. Base
+    is unsigned and ``y_sign`` carries the hemisphere, so one expression
+    serves north and south.
+    """
+    from shapely.geometry import Polygon
+
+    y = y_sign * base
+    return Polygon([(-side, y), (side, y), (0.0, y + y_sign * side)])
+
+
+def _meridian_centre(base: float, y_sign: float, side: float) -> "BaseGeometry":
+    """Centroid of that triangle, which always lies on the meridian.
+
+    ``x`` is zero for every triangle at every resolution, so under
+    ``center`` the point falls on the line the quadrant windows cut
+    along. Tested against the geometry **before** the split, where the
+    line is interior and the answer is one rather than two.
+    """
+    from shapely.geometry import Point
+
+    return Point(0.0, y_sign * (base + side / 3.0))
+
+
+def _accept_meridian_leaf(
+    prepared: "PreparedGeometry",
+    containment: Containment,
+    base: float,
+    y_sign: float,
+    side: float,
+) -> bool:
+    """Whether a target-resolution triangle is kept, given how it was reached.
+
+    The counterpart of :func:`_accept_leaf`, and the chain nests for the
+    same reason: the centroid is a point of the triangle, so wholly
+    inside implies centre inside implies touching.
+    """
+    if containment == "contains":
+        return False
+    if containment == "intersects":
+        return True
+    return bool(prepared.contains(_meridian_centre(base, y_sign, side)))
+
+
+def _fill_meridian_node(
+    plane: "PreparedGeometry",
+    lattices: dict[str, "_LatticeView"],
+    hemisphere: str,
+    base: float,
+    y_sign: float,
+    side: float,
+    level: int,
+    target: int,
+    containment: Containment,
+    code: str,
+    compact: bool,
+    budget: _Budget,
+) -> str | None:
+    """Walk one prime-meridian triangle and return its index fragment.
+
+    The three outcomes of :func:`_fill_node`, on a triangle instead of a
+    square, and with one difference that is the whole reason this
+    function exists: the predicates run against the geometry **before**
+    the quadrant split. A triangle straddles the line, so its two halves
+    live in different clipped pieces; testing the whole figure against
+    the whole geometry gives ``intersects`` the union of the two halves
+    and ``contains`` their intersection, in one predicate call each,
+    without a second descent to reconcile.
+
+    Refinement follows the fold of Figure 4(c), read through
+    :func:`itacart.boundary.meridian_child`: the ordinary ``d x d`` grid
+    is reflected onto its own diagonal, so ``(i, j)`` and ``(j, i)`` land
+    in the same sub-row on opposite sides of the line. The diagonal is
+    another triangle and recurses here; everything else is an ordinary
+    parallelogram whose lattice anchor is ``(|offset| * sub + base,
+    base)`` in the frame of the side it fell on, so its whole subtree is
+    handed to :func:`_fill_node` unchanged.
+
+    Codes come from :func:`itacart.boundary.child_code` on the grid
+    position, so the fragment is emitted in index order and no merge is
+    needed afterwards.
+    """
+    from .boundary import child_code, meridian_child
+
+    triangle = _meridian_triangle(base, y_sign, side)
+    if not plane.intersects(triangle):
+        return None
+    if plane.contains(triangle):
+        if compact or level == target:
+            budget.charge(1)
+            return code
+        budget.charge(_leaves_between(level, target))
+        return code + _expansion(level, target)
+    if level == target:
+        if _accept_meridian_leaf(plane, containment, base, y_sign, side):
+            budget.charge(1)
+            return code
+        return None
+
+    step = level + 1
+    divisor = linear_refinement_ratio(step)
+    sub = side / divisor
+    parts: list[str] = []
+    for row in range(divisor):
+        for column in range(divisor):
+            sub_row, offset = meridian_child(row, column, divisor)
+            child_base = base + sub_row * sub
+            text = child_code(row, column, step)
+            if offset == 0:
+                fragment = _fill_meridian_node(
+                    plane,
+                    lattices,
+                    hemisphere,
+                    child_base,
+                    y_sign,
+                    sub,
+                    step,
+                    target,
+                    containment,
+                    text,
+                    compact,
+                    budget,
+                )
+            else:
+                view = lattices.get(hemisphere + ("E" if offset > 0 else "W"))
+                if view is None:
+                    continue
+                fragment = _fill_node(
+                    view.prepared,
+                    abs(offset) * sub + child_base,
+                    child_base,
+                    sub,
+                    step,
+                    target,
+                    containment,
+                    text,
+                    compact,
+                    budget,
+                )
+            if fragment is not None:
+                parts.append(fragment)
+    if not parts:
+        return None
+    if compact and _folds_into_its_parent(parts, divisor):
+        return code
+    return f"{code}{DESCENT_OPEN}{SIBLING_SEPARATOR.join(parts)}{DESCENT_CLOSE}"
+
+
+def _count_meridian_node(
+    plane: "PreparedGeometry",
+    lattices: dict[str, "_LatticeView"],
+    hemisphere: str,
+    base: float,
+    y_sign: float,
+    side: float,
+    level: int,
+    target: int,
+) -> int:
+    """Accumulate the cell count under one meridian triangle.
+
+    The counting twin of :func:`_fill_meridian_node`, with the
+    wholly-inside case answered by arithmetic, exactly as
+    :func:`_count_node` answers it for a square.
+    """
+    from .boundary import meridian_child
+
+    triangle = _meridian_triangle(base, y_sign, side)
+    if not plane.intersects(triangle):
+        return 0
+    if plane.contains(triangle):
+        return _leaves_between(level, target)
+    if level == target:
+        return int(bool(plane.contains(_meridian_centre(base, y_sign, side))))
+
+    step = level + 1
+    divisor = linear_refinement_ratio(step)
+    sub = side / divisor
+    total = 0
+    for row in range(divisor):
+        for column in range(divisor):
+            sub_row, offset = meridian_child(row, column, divisor)
+            child_base = base + sub_row * sub
+            if offset == 0:
+                total += _count_meridian_node(
+                    plane,
+                    lattices,
+                    hemisphere,
+                    child_base,
+                    y_sign,
+                    sub,
+                    step,
+                    target,
+                )
+                continue
+            view = lattices.get(hemisphere + ("E" if offset > 0 else "W"))
+            if view is None:
+                continue
+            total += _count_node(
+                view.prepared,
+                abs(offset) * sub + child_base,
+                child_base,
+                sub,
+                step,
+                target,
+            )
+    return total
+
+
+def _meridian_rows(plane: "BaseGeometry") -> list[tuple[str, int]]:
+    """Hemisphere and resolution-1 row of every meridian triangle to try.
+
+    Candidates, not answers: a row is offered when the strip
+    ``|x| <= _L1`` reaches its band of latitudes, and the descent decides
+    whether the triangle is actually met. The strip is clipped first so
+    that a geometry nowhere near the line offers nothing at all.
+
+    The polar row is left out for the reason
+    :func:`_check_addressable` refuses it elsewhere -- it is cut by the
+    pole and does not carry the nominal area -- and so is any row past
+    the last one that addresses a cell.
+    """
+    from shapely.geometry import box
+
+    strip = plane.intersection(box(-_L1, -_PLANE_LIMIT, _L1, _PLANE_LIMIT))
+    if strip.is_empty:
+        return []
+    _west, low, _east, high = strip.bounds
+    out: list[tuple[str, int]] = []
+    for hemisphere, y_sign in (("N", 1.0), ("S", -1.0)):
+        first = low if y_sign > 0 else -high
+        last = high if y_sign > 0 else -low
+        # The equator belongs to the north, which is the rule
+        # geo_to_cell applies and _quadrant_pieces enforces on the
+        # clipped pieces. This walk is driven by the unsplit plane, so it
+        # has to apply the rule itself: a geometry that only reaches y=0
+        # offers a northern row and no southern one. Without this a point
+        # on the equator is filled twice, once from each hemisphere.
+        if last < 0.0 or (y_sign < 0.0 and last == 0.0):
+            continue
+        for row in range(
+            max(int(math.floor(first / _L1)), 0), int(math.floor(last / _L1)) + 1
+        ):
+            quadrant = hemisphere + "E"
+            if last_lattice_column(quadrant, row, _L1) <= 0:
+                continue
+            if last_lattice_column(quadrant, row + 1, _L1) <= 0:
+                continue
+            out.append((hemisphere, row))
+    return out
 
 
 def _count_node(
@@ -655,14 +1093,18 @@ def _count_node(
 
 def _prepare(
     geometry: "BaseGeometry", resolution: int, densify: bool
-) -> list[tuple[str, "_LatticeView"]]:
+) -> tuple["BaseGeometry", list[tuple[str, "_LatticeView"]]]:
     """Screen, densify, project and shear a geometry, one part per quadrant.
 
-    Returns ``(quadrant, lattice view)`` pairs ready for descent.
+    Returns the projected plane geometry **before** the split, and the
+    ``(quadrant, lattice view)`` pairs ready for descent. The unsplit
+    plane is not a convenience: a prime-meridian triangle straddles the
+    cut, so the only figure that can answer a containment question about
+    it is the one that has not been cut.
     """
 
     if geometry.is_empty:
-        return []
+        return geometry, []
     if crosses_antemeridian(geometry):
         raise AntemeridianError(
             "geometry crosses 180 degrees longitude outside an extension "
@@ -671,11 +1113,12 @@ def _prepare(
         )
     if densify and geometry.geom_type in {"Polygon", "MultiPolygon"}:
         geometry = _densify_any(geometry, _auto_segment(resolution))
+    geometry = _lift_extensions(geometry)
     plane = _project(geometry)
     out: list[tuple[str, "_LatticeView"]] = []
     for quadrant, piece in _quadrant_pieces(plane):
         out.append((quadrant, _LatticeView(_to_lattice(piece, quadrant))))
-    return out
+    return plane, out
 
 
 _T = TypeVar("_T")
@@ -763,17 +1206,41 @@ def polyfill(
     threshold :func:`_auto_segment` derives from the target resolution.
     Pass an already densified geometry and the step is idempotent.
 
-    **Restriction.** Three families are refused rather than filled: the
-    prime-meridian column, the last lattice column of a row, and the
-    polar row. In all three the cell is not the sheared square the
-    descent tests, so the containment chain would no longer hold. The
-    screen runs at resolution 1 and is conservative.
+    **The prime-meridian column.** Its cells are triangles straddling
+    the line, so the ordinary descent cannot test them and a separate
+    walk does. They carry the eastern spelling, which is the only one
+    the grammar admits, and their containment is decided against the
+    geometry before the quadrant split -- the one figure that sees both
+    halves of a cell the split cuts in two.
+
+    **Limitation, not a rule.** Two families are refused rather than
+    filled: the last lattice column of a row, and the polar row. Neither
+    cell is the sheared square the descent tests, and unlike the
+    prime-meridian column neither has a descent of its own yet, so the
+    fill refuses them.
+
+    The cells exist. :func:`itacart.cells.geo_to_cell` names them,
+    :mod:`itacart.boundary` builds their rings, and the hierarchy
+    addresses their children; ITACaRT absorbs the border strip into the
+    last column rather than dropping it. What is refused is the fill's
+    ability to descend a trapezoid, and the refusal is stated here so
+    that it is read as a gap in this function and not as a property of
+    the grid -- which is what happened to the prime-meridian column,
+    documented as a restriction for several phases before it turned out
+    to need only a descent of its own.
+
+    **Reopening trigger.** When the fill can descend a trapezoid, the
+    absorbing cell stops being refused and starts being absorbed, and
+    the screen loses the last-column family.
 
     Args:
         geometry: A Shapely geometry in EPSG:4326.
         resolution: Target resolution level, 1 to 13.
         containment: Predicate deciding whether a cell is kept.
-        compact: Return a mixed-resolution compacted index instead of a
+        compact: Fold every node whose children were all kept, giving the
+            same index as compacting the uniform fill afterwards with
+            :func:`itacart.hierarchy.compact_cells` under the same
+            containment mode. Returns a mixed-resolution index instead of a
             uniform one.
         n_jobs: Worker count; above 1 spreads base cells over threads.
 
@@ -784,8 +1251,9 @@ def polyfill(
         AntemeridianError: If the geometry crosses 180 degrees outside an
             extension zone.
         UnsupportedGeometryTypeError: On unsupported geometry types.
-        NonExistentCellError: If the geometry reaches the prime-meridian
-            column or a border-absorbing column.
+        NonExistentCellError: If the geometry reaches a border-absorbing
+            column, which is a limitation of this function rather than a
+            property of the grid.
         DomainError: If the geometry reaches the polar row.
         GeometryError: If the fill exceeds :data:`MAX_FILL_CELLS`.
     """
@@ -798,8 +1266,10 @@ def polyfill(
         )
 
     budget = _Budget()
-    roots: list[str] = []
-    for quadrant, view in _prepare(geometry, resolution, densify=True):
+    plane, views = _prepare(geometry, resolution, densify=True)
+    lattices = dict(views)
+    ordered: dict[str, list[str]] = {}
+    for quadrant, view in views:
 
         def _one(base: tuple[int, int], _v: "_LatticeView" = view) -> str | None:
             column, row = base
@@ -823,9 +1293,46 @@ def polyfill(
         cells = sorted(_base_cells(view.prepared, view.geometry, quadrant, resolution))
         parts = [f for f in _map_jobs(cells, _one, n_jobs) if f is not None]
         if parts:
-            joined = SIBLING_SEPARATOR.join(parts)
-            roots.append(f"{quadrant}{DESCENT_OPEN}{joined}{DESCENT_CLOSE}")
+            ordered.setdefault(quadrant, []).extend(parts)
 
+    # The prime-meridian column, walked once per hemisphere against the
+    # unsplit plane and spelled from the east, which is the only side that
+    # names it. Prepended rather than appended: column 0 sorts before every
+    # ordinary column, and the eastern root may not exist yet when the
+    # geometry lies wholly west of the line.
+    meridian = _meridian_rows(plane)
+    if meridian:
+        from shapely.prepared import prep
+
+        prepared_plane = prep(plane)
+        seam: dict[str, list[str]] = {}
+        for hemisphere, row in meridian:
+            code = f"{0:0{RES1_DIGITS}d}{RES1_SEPARATOR}{row:0{RES1_DIGITS}d}"
+            fragment = _fill_meridian_node(
+                prepared_plane,
+                lattices,
+                hemisphere,
+                row * _L1,
+                1.0 if hemisphere == "N" else -1.0,
+                _L1,
+                1,
+                resolution,
+                containment,
+                code,
+                compact,
+                budget,
+            )
+            if fragment is not None:
+                seam.setdefault(hemisphere + "E", []).append(fragment)
+        for quadrant, fragments in seam.items():
+            ordered[quadrant] = fragments + ordered.get(quadrant, [])
+
+    roots = [
+        f"{quadrant}{DESCENT_OPEN}"
+        f"{SIBLING_SEPARATOR.join(ordered[quadrant])}{DESCENT_CLOSE}"
+        for quadrant in QUADRANTS
+        if ordered.get(quadrant)
+    ]
     if not roots:
         raise GeometryError(
             "geometry covers no cell at this resolution; it may be empty "
@@ -877,10 +1384,12 @@ def count_internal_cells(polygon: "Polygon", resolution: int, n_jobs: int = 1) -
     perimeter then determine the residual, which is an outcome to be
     reported against the bound above, not a target to refine toward.
 
-    **Restriction.** The same three families :func:`polyfill` refuses are
-    refused here, and for the same reason: outside the parallelogram
-    interior a cell does not carry the nominal area, so the product would
-    not be an area.
+    **Limitation, not a rule.** The same two families :func:`polyfill`
+    refuses are refused here, and it is the same gap: the count walks the
+    squares the fill walks, so a family the fill cannot descend cannot be
+    counted either. The prime-meridian column is counted by a walk of its
+    own, and the other two await one. See :func:`polyfill` for why this
+    is a property of the walk rather than of the grid.
 
     Provenance: ``itacart_core/cell_filling.py``
     (``polygon_to_cells_count``).
@@ -896,14 +1405,16 @@ def count_internal_cells(polygon: "Polygon", resolution: int, n_jobs: int = 1) -
     Raises:
         AntemeridianError: If the polygon crosses 180 degrees outside an
             extension zone.
-        NonExistentCellError: If the polygon reaches the prime-meridian
-            column or a border-absorbing column.
+        NonExistentCellError: If the polygon reaches a border-absorbing
+            column.
         DomainError: If the polygon reaches the polar row.
     """
     _check_resolution(resolution)
     _check_jobs(n_jobs)
     total = 0
-    for quadrant, view in _prepare(polygon, resolution, densify=True):
+    plane, views = _prepare(polygon, resolution, densify=True)
+    lattices = dict(views)
+    for quadrant, view in views:
 
         def _one(base: tuple[int, int], _v: "_LatticeView" = view) -> int:
             column, row = base
@@ -913,6 +1424,23 @@ def count_internal_cells(polygon: "Polygon", resolution: int, n_jobs: int = 1) -
 
         cells = _base_cells(view.prepared, view.geometry, quadrant, resolution)
         total += sum(_map_jobs(cells, _one, n_jobs))
+
+    meridian = _meridian_rows(plane)
+    if meridian:
+        from shapely.prepared import prep
+
+        prepared_plane = prep(plane)
+        for hemisphere, row in meridian:
+            total += _count_meridian_node(
+                prepared_plane,
+                lattices,
+                hemisphere,
+                row * _L1,
+                1.0 if hemisphere == "N" else -1.0,
+                _L1,
+                1,
+                resolution,
+            )
     return total
 
 

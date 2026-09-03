@@ -437,6 +437,51 @@ def _pad_base_codes(node: _Node) -> None:
         _pad_base_codes(child)
 
 
+_MERIDIAN_TWIN: Final[dict[str, str]] = {"NW": "NE", "SW": "SE"}
+"""The eastern root each western root hands its column 0 to."""
+
+
+def _base_column(code: str) -> int:
+    """The column of a resolution-1 code the parser has already validated."""
+    return int(code.partition(RES1_SEPARATOR)[0])
+
+
+def _fold_meridian_column(globe: _Node) -> None:
+    """Move column 0 out of the western roots, into their eastern twins.
+
+    Column 0 holds the meridian triangle, one cell the two sides share and
+    only the east may name: :func:`itacart.boundary.is_valid_cell` denies
+    ``NW(0000/Y)`` and the tree codec refuses it. So a western root
+    carrying column 0 is not a second spelling of a cell, it is a spelling
+    of no cell, and the tree is where that has to be settled — it is the
+    intermediate the folding operations would otherwise render and hand on.
+
+    A western root left with no base cells is dropped rather than emptied,
+    since a childless root denotes its whole quadrant and would silently
+    widen the region. The moved cells go to a **fresh** eastern root even
+    when one is already there; :func:`_merge_trees` runs afterwards and its
+    childless-occurrence rule is what decides containment, in one place.
+    """
+    folded: list[_Node] = []
+    for root in globe.children:
+        east_code = _MERIDIAN_TWIN.get(root.code)
+        if east_code is None:
+            folded.append(root)
+            continue
+        moving = [c for c in root.children if _base_column(c.code) == 0]
+        if not moving:
+            folded.append(root)
+            continue
+        staying = [c for c in root.children if _base_column(c.code) != 0]
+        if staying:
+            root.children = staying
+            folded.append(root)
+        east = _Node(east_code, QUADRANT_RESOLUTION)
+        east.children = moving
+        folded.append(east)
+    globe.children = folded
+
+
 def _collapse(node: _Node) -> None:
     """Replace a fully covered node by itself, deepest level first.
 
@@ -607,6 +652,8 @@ def compose(cells: Iterable[str]) -> str:
     trees = [_parse_tree(cell) for cell in cells]
     if not trees:
         raise InvalidIndexError("cannot compose an empty collection of cells")
+    for tree in trees:
+        _fold_meridian_column(tree)
     return _render_tree(_merge_trees(trees))
 
 
@@ -639,6 +686,7 @@ def normalize(index: str) -> str:
     """
     tree = _parse_tree(index)
     _pad_base_codes(tree)
+    _fold_meridian_column(tree)
     merged = _merge_trees([tree])
     _collapse(merged)
     _sort_siblings(merged)
