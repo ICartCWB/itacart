@@ -10,14 +10,19 @@ from __future__ import annotations
 
 import inspect
 import math
-import random
 import sys
 from pathlib import Path
 
 import pytest
 
 from itacart import geodesy
-from itacart.constants import EQUATOR_QUADRANT, MERIDIAN_QUADRANT, WGS84_A, WGS84_B
+from itacart.constants import (
+    EQUATOR_QUADRANT,
+    MERIDIAN_QUADRANT,
+    WGS84_A,
+    WGS84_B,
+    WGS84_E2,
+)
 from itacart.exceptions import ConvergenceError, DomainError
 
 # tests/ is not a package in this repo, so the shared point table is
@@ -31,19 +36,97 @@ from reference_points import (  # noqa: E402
     ROUNDTRIP_POINTS,
 )
 
-try:  # pragma: no cover - import guard, not logic
-    import pyproj as _pyproj
+#: Radius of the sphere with the same surface area as the WGS84 ellipsoid,
+#: which is the radius PROJ uses for its spherical sinusoidal. Written out
+#: rather than imported, so that the comparison below needs no library.
+AUTHALIC_RADIUS_M = 6371007.181
 
-    HAS_PYPROJ = True
-except ImportError:  # pragma: no cover
-    _pyproj = None  # type: ignore[assignment]
-    HAS_PYPROJ = False
 
-pyproj = _pyproj
+def _geodesic_derivatives(phi: float, alpha: float) -> tuple[float, float, float]:
+    """Right-hand side of the geodesic equations, differentiated by arc length.
 
-requires_pyproj = pytest.mark.skipif(
-    not HAS_PYPROJ, reason="pyproj not installed; this is a dev-only cross-check"
-)
+    On an ellipsoid of revolution a geodesic satisfies
+
+        d(phi) / ds   = cos(alpha) / rho(phi)
+        d(lambda) / ds = sin(alpha) / (nu(phi) cos(phi))
+        d(alpha) / ds  = sin(alpha) tan(phi) / nu(phi)
+
+    with ``rho`` the meridian radius of curvature and ``nu`` the prime
+    vertical one. This is the definition of a geodesic, not a series
+    expansion of one, which is what makes it an independent check on
+    Vincenty: the two agree only if both are solving the same problem.
+    """
+    sin_phi = math.sin(phi)
+    factor = 1.0 - WGS84_E2 * sin_phi * sin_phi
+    nu = WGS84_A / math.sqrt(factor)
+    rho = WGS84_A * (1.0 - WGS84_E2) / factor**1.5
+    return (
+        math.cos(alpha) / rho,
+        math.sin(alpha) / (nu * math.cos(phi)),
+        math.sin(alpha) * math.tan(phi) / nu,
+    )
+
+
+def integrate_geodesic(
+    lon_deg: float,
+    lat_deg: float,
+    azimuth_deg: float,
+    distance_m: float,
+    steps: int = 400,
+) -> tuple[float, float, float] | None:
+    """Runge-Kutta 4 solution of the direct problem, or ``None`` at a pole.
+
+    Returns the end point and the azimuth carried to it. The system is
+    singular where ``cos(phi)`` vanishes, so a path that climbs above 89.5
+    degrees is refused rather than integrated through the singularity; the
+    callers count the refusals instead of hiding them.
+    """
+    phi = math.radians(lat_deg)
+    lam = math.radians(lon_deg)
+    alpha = math.radians(azimuth_deg)
+    step = distance_m / steps
+    for _ in range(steps):
+        if abs(phi) > math.radians(89.5):
+            return None
+        k1 = _geodesic_derivatives(phi, alpha)
+        k2 = _geodesic_derivatives(phi + step / 2 * k1[0], alpha + step / 2 * k1[2])
+        k3 = _geodesic_derivatives(phi + step / 2 * k2[0], alpha + step / 2 * k2[2])
+        k4 = _geodesic_derivatives(phi + step * k3[0], alpha + step * k3[2])
+        phi += step / 6 * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0])
+        lam += step / 6 * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1])
+        alpha += step / 6 * (k1[2] + 2 * k2[2] + 2 * k3[2] + k4[2])
+    return math.degrees(lam), math.degrees(phi), math.degrees(alpha) % 360.0
+
+
+def clairaut_constant(lat_deg: float, azimuth_deg: float) -> float:
+    """``nu cos(phi) sin(alpha)``, constant along a geodesic.
+
+    Clairaut's relation. It is exact on any surface of revolution and owes
+    nothing to the solution method, so it holds the inverse solution to a
+    standard that no amount of agreement between two series could.
+    """
+    phi = math.radians(lat_deg)
+    nu = WGS84_A / math.sqrt(1.0 - WGS84_E2 * math.sin(phi) ** 2)
+    return nu * math.cos(phi) * math.sin(math.radians(azimuth_deg))
+
+
+#: The grid the two geodesic tests below enumerate. Longitude is here only to
+#: catch a wrap bug: on an ellipsoid of revolution a geodesic does not know
+#: where the prime meridian is, and the tests assert that it does not.
+CASE_LATITUDES = (-80.0, -60.0, -40.0, -20.0, 0.0, 20.0, 40.0, 60.0, 80.0)
+CASE_LONGITUDES = (0.0, 170.0)
+CASE_AZIMUTHS = (0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0)
+CASE_DISTANCES = (1.0e3, 1.0e5, 1.0e6, 5.0e6)
+
+
+def enumerate_cases() -> list[tuple[float, float, float, float]]:
+    return [
+        (lon, lat, azimuth, distance)
+        for lat in CASE_LATITUDES
+        for lon in CASE_LONGITUDES
+        for azimuth in CASE_AZIMUTHS
+        for distance in CASE_DISTANCES
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -176,64 +259,125 @@ def test_inverse_meridian_arc_raises_on_iteration_cap() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Acceptance criterion 4 -- Vincenty against pyproj
+# Acceptance criterion 4 -- Vincenty against an independent solution
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.crosscheck
-@requires_pyproj
-def test_criterion_4_vincenty_matches_pyproj() -> None:
-    """Distance agrees with pyproj.Geod below 1 mm out to 5 500 km."""
-    geod = pyproj.Geod(ellps="WGS84")
-    rng = random.Random(20260824)
-    worst_distance = 0.0
-    worst_azimuth = 0.0
-    pairs = 0
-    while pairs < 500:
-        lat1 = math.degrees(math.asin(rng.uniform(-1.0, 1.0)))
-        lon1 = rng.uniform(-180.0, 180.0)
-        lat2 = math.degrees(math.asin(rng.uniform(-1.0, 1.0)))
-        lon2 = rng.uniform(-180.0, 180.0)
-        azimuth_ref, _, distance_ref = geod.inv(lon1, lat1, lon2, lat2)
-        if distance_ref > 5.5e6:
-            continue
-        pairs += 1
-        distance, azimuth = geodesy.inverse_geodesic(lon1, lat1, lon2, lat2)
-        worst_distance = max(worst_distance, abs(distance - distance_ref))
-        delta = (azimuth - azimuth_ref % 360.0 + 180.0) % 360.0 - 180.0
-        worst_azimuth = max(worst_azimuth, abs(delta))
-    assert worst_distance < 1e-3, f"worst distance error {worst_distance} m"
-    assert worst_azimuth < 1e-6, f"worst azimuth error {worst_azimuth} deg"
+def test_criterion_4_direct_matches_a_numerically_integrated_geodesic() -> None:
+    """The direct solution agrees with Runge-Kutta 4 on the geodesic equations.
 
+    This is the check that pyproj used to provide, done with mathematics
+    instead of a second library. Vincenty solves the geodesic by a series in
+    the flattening; the integrator solves the differential equations that
+    define a geodesic. Agreement between them is evidence; agreement between
+    two implementations of the same series would not be.
 
-@pytest.mark.crosscheck
-@requires_pyproj
-def test_direct_geodesic_matches_pyproj() -> None:
-    """The direct solution agrees with pyproj on the end point."""
-    geod = pyproj.Geod(ellps="WGS84")
-    lon1, lat1 = REFERENCE_POINTS["ita_sjc"]
-    for azimuth in (0.0, 37.5, 90.0, 180.0, 271.25):
-        for distance in (1.0, 1_000.0, 500_000.0, 3_000_000.0):
-            lon_ref, lat_ref, _ = geod.fwd(lon1, lat1, azimuth, distance)
-            lon2, lat2 = geodesy.direct_geodesic(lon1, lat1, azimuth, distance)
-            assert abs(lat2 - lat_ref) < 1e-9
-            assert abs(lon2 - lon_ref) < 1e-9
-
-
-@pytest.mark.crosscheck
-@requires_pyproj
-def test_projection_is_not_proj_sinusoidal_on_the_sphere() -> None:
-    """The ellipsoidal ordinate departs from the spherical one by km.
-
-    Pins why PROJ is not a runtime dependency: its ``+proj=sinu`` on a sphere
-    is not the parallels-plane projection of the paper.
+    The grid is enumerated rather than drawn at random, because the cases
+    that break a geodesic solver are the ones on the boundary -- the poles,
+    the meridian, the equator -- and a random draw is most likely to miss
+    exactly those.
     """
-    spherical = pyproj.Transformer.from_crs(
-        "EPSG:4326", "+proj=sinu +R=6371007.181 +units=m +no_defs", always_xy=True
+    worst = 0.0
+    checked = 0
+    refused = 0
+    for lon, lat, azimuth, distance in enumerate_cases():
+        integrated = integrate_geodesic(lon, lat, azimuth, distance)
+        if integrated is None:
+            refused += 1
+            continue
+        lon_ref, lat_ref, _ = integrated
+        lon_out, lat_out = geodesy.direct_geodesic(lon, lat, azimuth, distance)
+        difference = (lon_out - lon_ref + 540.0) % 360.0 - 180.0
+        worst = max(worst, abs(difference), abs(lat_out - lat_ref))
+        checked += 1
+
+    assert checked == 568
+    assert refused == 8
+    assert worst < 1e-8, f"worst departure {worst} degrees"
+
+
+def test_criterion_4_inverse_returns_the_geodesic_it_was_asked_for() -> None:
+    """Feed the inverse solution its own answer and the path must close.
+
+    The inverse solution is checked through the integrator rather than
+    against it: take its distance and azimuth, integrate along them, and the
+    path has to arrive at the point the inverse was given. A distance that is
+    slightly wrong and an azimuth that is slightly wrong cannot cancel here,
+    because the integrator is not solving the same equations by the same
+    means.
+    """
+    worst_metres = 0.0
+    checked = 0
+    for lon, lat, azimuth, distance in enumerate_cases():
+        integrated = integrate_geodesic(lon, lat, azimuth, distance)
+        if integrated is None:
+            continue
+        lon_end, lat_end, _ = integrated
+        solved_distance, solved_azimuth = geodesy.inverse_geodesic(
+            lon, lat, lon_end, lat_end
+        )
+        closing = integrate_geodesic(lon, lat, solved_azimuth, solved_distance)
+        assert closing is not None
+        lon_closed, lat_closed, _ = closing
+        gap, _ = geodesy.inverse_geodesic(lon_closed, lat_closed, lon_end, lat_end)
+        worst_metres = max(worst_metres, gap)
+        checked += 1
+
+    assert checked == 568
+    assert worst_metres < 1e-3, f"worst closure {worst_metres} m"
+
+
+def test_clairaut_relation_holds_on_the_inverse_solution() -> None:
+    """``nu cos(phi) sin(alpha)`` is the same at both ends of a geodesic.
+
+    An exact invariant of any surface of revolution, and one the solver was
+    never told about. It is checked at machine precision because there is no
+    truncation in it to hide behind: if the two azimuths the inverse solution
+    reports did not belong to one geodesic, this would not close.
+    """
+    worst = 0.0
+    checked = 0
+    for name_1, name_2 in (
+        ("ita_sjc", "central_park"),
+        ("greenwich_observatory", "curitiba"),
+        ("ita_sjc", "kamchatka"),
+        ("central_park", "east_china_sea"),
+        ("greenwich_observatory", "longyearbyen"),
+        ("italian_peninsula", "suva"),
+    ):
+        lon1, lat1 = REFERENCE_POINTS[name_1]
+        lon2, lat2 = REFERENCE_POINTS[name_2]
+        _, forward = geodesy.inverse_geodesic(lon1, lat1, lon2, lat2)
+        _, backward = geodesy.inverse_geodesic(lon2, lat2, lon1, lat1)
+        start = clairaut_constant(lat1, forward)
+        end = clairaut_constant(lat2, (backward + 180.0) % 360.0)
+        if abs(start) > 1.0:
+            worst = max(worst, abs(start - end) / abs(start))
+        checked += 1
+
+    assert checked == 6
+    assert worst < 1e-12, f"worst departure from Clairaut {worst}"
+
+
+def test_the_projection_is_not_the_spherical_sinusoidal() -> None:
+    """The ellipsoidal ordinate departs from the spherical one by kilometres.
+
+    Pins why PROJ is not a dependency, runtime or otherwise. Its
+    ``+proj=sinu`` on the authalic sphere puts the ordinate at ``R phi``,
+    a closed form that needs no library to evaluate, and the paper's
+    parallels-plane projection puts it at the meridian arc. At 45 degrees the
+    two differ by about 19 km, which is four orders above the tolerance any
+    other test in this file uses.
+    """
+    for latitude in (15.0, 30.0, 45.0, 60.0, 75.0):
+        spherical = AUTHALIC_RADIUS_M * math.radians(latitude)
+        ellipsoidal = geodesy.meridian_arc(latitude)
+        assert abs(ellipsoidal - spherical) > 1_000.0
+    assert (
+        round(AUTHALIC_RADIUS_M * math.radians(45.0) - geodesy.meridian_arc(45.0))
+        == 18833
     )
-    _, y_sphere = spherical.transform(0.0, 45.0)
-    y_ellipsoid = geodesy.meridian_arc(45.0)
-    assert abs(y_ellipsoid - y_sphere) > 1_000.0
 
 
 # ---------------------------------------------------------------------------

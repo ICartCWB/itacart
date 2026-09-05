@@ -35,6 +35,15 @@ The package is layered, and the layers correspond to delivery phases:
 : Parsing, composition and canonical form of the compositional index. The
   bridge between one string and the cells it addresses.
 
+`itacart.metrics`
+: Cell shape metrics, for comparison against other DGGS implementations.
+  Compactness and normalized area follow the conventions of Kmoch, Vasilyev,
+  Virro and Uuemaa (2022) so that the numbers are comparable with that paper's
+  figures rather than merely accurate; the cell base angle is the ellipsoidal
+  image of the 45 degree angle the ITACaRT paper draws on the sinusoidal plane.
+  Each function's page states which convention it transcribes and where the
+  convention stops being trustworthy.
+
 The remaining modules are declared in the package facade and delivered by later
 phases; until then their pages show the contract without an implementation
 behind it.

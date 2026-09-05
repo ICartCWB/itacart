@@ -30,8 +30,11 @@ classifiers = [
 ]
 
 # Runtime: shapely is the sole hard dependency.
-# pyproj is deliberately absent: the ellipsoidal sinusoidal projection is
-# implemented directly from equations (1) and (2) of the paper.
+# PROJ is absent from every extra as well as from the runtime. The
+# ellipsoidal sinusoidal projection is implemented from equations (1) and
+# (2) of the paper, and the geodesic solutions are checked against a
+# Runge-Kutta integration of the geodesic equations and against Clairaut's
+# relation, not against a second library that would have to be trusted.
 dependencies = [
     "shapely>=2.0",
 ]
@@ -46,13 +49,11 @@ dev = [
     "isort>=5.13",
     "flake8>=7.0",
     "mypy>=1.9",
-    "pyproj>=3.6",                 # geodetic cross-check in tests only
     "geopandas>=0.14",
 ]
 notebooks = [
     "jupyter>=1.0",
     "matplotlib>=3.8",
-    "pyproj>=3.6",
 ]
 docs = [
     "sphinx>=7.0,<10",
@@ -98,10 +99,18 @@ xfail_strict = true
 markers = [
     "conformance: OGC DGGS Core / EAERS conformance tests",
     "slow: tests that take more than a second",
-    "crosscheck: tests validating against pyproj (dev-only dependency)",
+    "crosscheck: tests validating against an independent solution method",
 ]
 
 [tool.coverage.report]
+# "raise NotImplementedError" stays for now, and the reason is written
+# down because the exclusion is otherwise invisible: it removes fifteen
+# lines from the denominator, ten in engine.py and five in interop.py,
+# all of them stubs waiting for their phase. The count is pinned in
+# tests/unit/test_totality.py, so a sixteenth cannot appear unnoticed,
+# and the coverage threshold in CI turns red the day those files are
+# implemented without tests. Deleting the entry belongs to the phase
+# that deletes the lines it excuses.
 exclude_lines = [
     "pragma: no cover",
     "raise NotImplementedError",

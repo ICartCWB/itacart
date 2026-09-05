@@ -53,8 +53,10 @@ WGS84_E: Final[float] = math.sqrt(WGS84_E2)
 WGS84_EP2: Final[float] = WGS84_E2 / (1.0 - WGS84_E2)
 """Second eccentricity squared, ``e^2 / (1 - e^2)``. Used by the meridian arc."""
 
-# Source is GeographicLib, read through
-# pyproj.Geod(ellps="WGS84").inv(0, 0, 0, 90). Deliberately NOT the value our
+# Source is GeographicLib, read once through PROJ at the time this constant
+# was written down and recorded here since. PROJ is not a dependency of this
+# package in any extra; the provenance is kept because a constant without one
+# is a magic number. Deliberately NOT the value our
 # own series computes: the point of this constant is to be an independent
 # target, and seeding it from our arithmetic would make F1 compare the code
 # against itself.

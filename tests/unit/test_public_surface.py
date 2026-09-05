@@ -35,6 +35,7 @@ CONTRACT_MODULES = (
     "hierarchy",
     "index",
     "interop",
+    "metrics",
     "resolutions",
     "serialization",
     "serialization.geometry_blob",

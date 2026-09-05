@@ -162,10 +162,31 @@ def test_the_census_reaches_the_whole_surface() -> None:
     for name in itacart.__all__:
         for tag in _classify(name):
             tally[tag] = tally.get(tag, 0) + 1
-    assert len(itacart.__all__) == 143, "surface changed; update the counts below"
+    assert len(itacart.__all__) == 146, "surface changed; update the counts below"
     assert tally["stub"] == 9
     assert tally["consumer"] >= 50
     assert tally["producer"] == len(PRODUCER_NAMES)
+
+
+def test_the_coverage_exclusion_is_pinned_to_the_stubs_it_excuses() -> None:
+    """``exclude_lines`` removes fifteen lines, and only these fifteen.
+
+    The exclusion for ``raise NotImplementedError`` is invisible in the
+    coverage report: it shrinks the denominator rather than showing a
+    miss, so a new stub anywhere in the package would silently stop
+    being measured. Counting the lines per file turns that into a
+    failure, and the count has to fall to zero as the stubs are
+    implemented rather than being adjusted upward.
+    """
+    import pathlib
+
+    root = pathlib.Path(itacart.__file__).parent
+    counted = {
+        path.name: path.read_text().count("raise NotImplementedError")
+        for path in sorted(root.rglob("*.py"))
+        if "raise NotImplementedError" in path.read_text()
+    }
+    assert counted == {"engine.py": 10, "interop.py": 5}
 
 
 def test_the_stub_exemption_expires_by_itself() -> None:

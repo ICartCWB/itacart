@@ -57,12 +57,22 @@ jobs:
       # named: a bare `--doctest-modules src` would override the testpaths
       # setting and collect the four doctests and nothing else, which
       # passes green while running none of the suite.
+      #
+      # --cov-branch and --cov-fail-under are what make the 100 per cent
+      # a standard rather than a habit. Without the first, branch
+      # coverage was never measured at all; without the second, coverage
+      # was collected, uploaded and allowed to fall with nothing going
+      # red. The threshold lives here and not in pyproject.toml on
+      # purpose: a partial local run under --cov must not trip it, and
+      # only this step runs the whole suite.
       - name: pytest
         if: matrix.os != 'ubuntu-latest' || matrix.python-version != '3.12'
         run: pytest
       - name: pytest with coverage and doctests
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        run: pytest --doctest-modules src tests --cov=itacart --cov-report=xml
+        run: >-
+          pytest --doctest-modules src tests --cov=itacart --cov-branch
+          --cov-fail-under=100 --cov-report=xml --cov-report=term-missing
       - name: upload coverage
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         uses: codecov/codecov-action@v4

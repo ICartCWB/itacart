@@ -144,6 +144,7 @@ from .interop import (
     from_geodataframe,
     to_geodataframe,
 )
+from .metrics import cell_base_angle, compactness, normalized_cell_area
 from .resolutions import (
     cell_size,
     effective_cell_area,
@@ -342,6 +343,10 @@ __all__ = [
     "resolution_for_scale",
     "resolution_table",
     "is_tokenizable_resolution",
+    # metrics
+    "compactness",
+    "cell_base_angle",
+    "normalized_cell_area",
     # hierarchy
     "get_parent",
     "get_children",
