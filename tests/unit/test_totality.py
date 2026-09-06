@@ -103,6 +103,32 @@ def _public_callables() -> Iterator[tuple[str, Callable[..., Any]]]:
             yield name, value
 
 
+def _public_methods() -> Iterator[tuple[str, Callable[..., Any]]]:
+    """Bound methods of the public classes, named ``Class.method``.
+
+    The census classifies the names in ``__all__``, and a class enters it
+    as one name. Its methods are a second surface that no sweep reached,
+    which is how a facade method came to refuse a compositional index with
+    a bare exception while the two functions refusing the identical
+    argument shape used the package's own. The sweep now reaches them.
+
+    The exception classes are skipped. What they expose is
+    ``BaseException``'s surface and not this package's, and instantiating
+    every one of them to sweep ``add_note`` would measure Python.
+    """
+    for name in sorted(itacart.__all__):
+        value = getattr(itacart, name)
+        if not isinstance(value, type) or issubclass(value, BaseException):
+            continue
+        instance = value()
+        for attribute in sorted(dir(instance)):
+            if attribute.startswith("_"):
+                continue
+            method = getattr(instance, attribute)
+            if callable(method):
+                yield f"{name}.{attribute}", method
+
+
 def _first_parameter(function: Callable[..., Any]) -> str | None:
     try:
         parameters = list(inspect.signature(function).parameters.values())
@@ -149,13 +175,19 @@ def _classify(name: str) -> set[str]:
 
 
 def _consumers() -> list[str]:
-    return [
+    functions = [
         name
         for name, _ in _public_callables()
         if "consumer" in _classify(name)
         and "stub" not in _classify(name)
         and name not in NEEDS_OPTIONAL_EXTRA
     ]
+    methods = [
+        name
+        for name, method in _public_methods()
+        if _first_parameter(method) in _INDEX_PARAMETERS
+    ]
+    return functions + methods
 
 
 def test_the_census_classifies_every_public_name() -> None:
@@ -308,9 +340,7 @@ def test_the_exempt_consumers_are_still_in_the_census() -> None:
 
 def test_the_extra_argument_table_covers_every_consumer_that_needs_one() -> None:
     """A consumer that grows a required argument fails here, not silently."""
-    needing = {
-        name for name in _consumers() if _required_extras(getattr(itacart, name))
-    }
+    needing = {name for name in _consumers() if _required_extras(_resolve(name))}
     assert needing == set(EXTRA_ARGUMENTS), (
         f"missing from the table: {sorted(needing - set(EXTRA_ARGUMENTS))}; "
         f"stale in the table: {sorted(set(EXTRA_ARGUMENTS) - needing)}"
@@ -461,6 +491,14 @@ def test_the_corpus_reaches_the_families_it_names() -> None:
 # --------------------------------------------------------------------------
 
 
+def _resolve(name: str) -> Callable[..., Any]:
+    """A public name, or ``Class.method`` on a default instance of it."""
+    if "." not in name:
+        return getattr(itacart, name)  # type: ignore[no-any-return]
+    owner, attribute = name.split(".", 1)
+    return getattr(getattr(itacart, owner)(), attribute)  # type: ignore[no-any-return]
+
+
 def _call(name: str, argument: str) -> None:
     """Call one consumer with one produced index.
 
@@ -471,7 +509,7 @@ def _call(name: str, argument: str) -> None:
     own hierarchy, because that is a fault escaping rather than a rule
     being applied.
     """
-    function = getattr(itacart, name)
+    function = _resolve(name)
     first = _first_parameter(function)
     value: Any = [argument] if first == "cells" else argument
     function(value, *EXTRA_ARGUMENTS.get(name, ()))

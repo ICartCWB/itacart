@@ -99,10 +99,29 @@ class TestDelegation:
         aligned list. These two methods are typed as returning one answer,
         and silently returning the first of several would be worse than
         refusing: it would be wrong in a way the type checker endorses.
+
+        The exception is the package's own and not a bare one. Two
+        functions refuse the identical argument shape --
+        ``are_neighbor_cells`` and ``grid_distance`` -- and both raise
+        ``NonAtomicIndexError``, whose documented purpose is exactly this
+        condition. A caller catching the package's base class should not
+        have to know which of the four it called.
+
+        The siblings are asserted against a compositional index paired with
+        an atomic one, and not against one paired with itself, because
+        ``grid_distance`` short-circuits two identical index strings to
+        zero before it checks atomicity. That is a hole in another module
+        and is left where it is; what it changes here is only which
+        argument pair demonstrates the rule.
         """
         index = itacart.compose(["NE(0500/0300)", "NE(0501/0300)"])
-        with pytest.raises(ValueError, match="compositional index"):
+        with pytest.raises(itacart.NonAtomicIndexError, match="compositional index"):
             getattr(engine.ITACaRT(), method)(index)
+
+        atomic = "NE(0500/0300)"
+        for sibling in ("are_neighbor_cells", "grid_distance"):
+            with pytest.raises(itacart.NonAtomicIndexError):
+                getattr(itacart, sibling)(index, atomic)
 
 
 class TestDescription:

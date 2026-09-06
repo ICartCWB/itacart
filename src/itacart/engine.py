@@ -25,7 +25,7 @@ from typing import Any
 
 from . import constants
 from .cells import cell_to_boundary, cell_to_centroid, geo_to_cell
-from .exceptions import ResolutionError
+from .exceptions import NonAtomicIndexError, ResolutionError
 from .resolutions import resolution_table
 
 __all__ = ["ITACaRT", "describe", "crs", "conformance"]
@@ -626,20 +626,39 @@ class ITACaRT:
         """Geodetic centroid of a cell.
 
         See :func:`itacart.cells.cell_to_centroid`.
+
+        Raises:
+            NonAtomicIndexError: If the index names more than one cell.
+                The functional API answers a compositional index with a
+                positionally aligned list; this signature promises one
+                answer, and returning the first of several would be wrong
+                in a way the type checker endorses. The refusal uses the
+                package's own exception rather than a bare one, because
+                ``are_neighbor_cells`` and ``grid_distance`` refuse the
+                identical argument shape with this exception and a caller
+                should not have to know which of the three it called.
         """
         centroid = cell_to_centroid(cell)
         if not isinstance(centroid, tuple):
-            raise ValueError(f"expected one cell, got a compositional index: {cell!r}")
+            raise NonAtomicIndexError(
+                f"expected one cell, got a compositional index: {cell!r}"
+            )
         return centroid
 
     def cell_to_boundary(self, cell: str) -> list[tuple[float, float]]:
         """Geodetic vertices bounding a cell.
 
         See :func:`itacart.cells.cell_to_boundary`.
+
+        Raises:
+            NonAtomicIndexError: If the index names more than one cell, for
+                the reason given on :meth:`cell_to_centroid`.
         """
         ring = cell_to_boundary(cell)
         if isinstance(ring[0], list):
-            raise ValueError(f"expected one cell, got a compositional index: {cell!r}")
+            raise NonAtomicIndexError(
+                f"expected one cell, got a compositional index: {cell!r}"
+            )
         return ring
 
 
