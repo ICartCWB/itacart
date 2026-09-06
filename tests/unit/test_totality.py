@@ -194,8 +194,19 @@ def test_the_coverage_exclusion_is_pinned_to_the_stubs_it_excuses() -> None:
     here -- no such line in the package, and no such entry in the
     configuration -- because either one alone could return without the
     other noticing.
+
+    The configuration is read by pulling the array out of the file text
+    rather than by parsing it. A TOML parser is the obvious tool and is the
+    wrong one: the only one in the standard library arrived in 3.11 and
+    this package supports 3.10, so reaching for it buys a dependency to
+    answer a question about a handful of string literals. A plain search of
+    the file text is the wrong tool too, because the comment above the
+    array explains why the entry was removed and so contains the very
+    phrase being searched for. What is wanted is the array, so the array is
+    what is read.
     """
     import pathlib
+    import re
 
     root = pathlib.Path(itacart.__file__).parent
     counted = {
@@ -205,12 +216,15 @@ def test_the_coverage_exclusion_is_pinned_to_the_stubs_it_excuses() -> None:
     }
     assert counted == {}
 
+    # Absent when the package is tested from an installed wheel rather than
+    # from a source tree, which is the only case this guard covers.
     project = root.parent.parent / "pyproject.toml"
     if project.is_file():
-        import tomllib
-
-        configured = tomllib.loads(project.read_text())
-        excluded = configured["tool"]["coverage"]["report"]["exclude_lines"]
+        text = project.read_text(encoding="utf-8")
+        opening = text.index("exclude_lines = [", text.index("[tool.coverage.report]"))
+        array = text[opening : text.index("]", opening)]
+        excluded = re.findall(r'"([^"]*)"', array)
+        assert excluded, "exclude_lines was found but read as empty"
         assert "raise NotImplementedError" not in excluded
 
 
