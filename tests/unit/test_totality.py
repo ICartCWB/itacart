@@ -58,14 +58,13 @@ PRODUCER_NAMES = (
     "vertex_to_cell",
 )
 
-#: Names exempt because they are not implemented yet. The exemption is an
-#: assertion, not a licence: see the test that keeps it honest.
-UNIMPLEMENTED_STUBS = (
-    "ITACaRT",
-    "conformance",
-    "crs",
-    "describe",
-)
+#: Names exempt because they are not implemented yet. Empty, and kept
+#: rather than deleted: the census still routes through it, so a new stub
+#: has somewhere to be declared and a test below still asserts that
+#: whatever is named here really does raise. An exemption that has expired
+#: is worth more standing at zero than removed, because removing it takes
+#: the assertion with it.
+UNIMPLEMENTED_STUBS: tuple[str, ...] = ()
 
 #: Consumers that refuse the *environment* before they ever look at the
 #: index. They stay in the census, because they are implemented and their
@@ -177,20 +176,24 @@ def test_the_census_reaches_the_whole_surface() -> None:
         for tag in _classify(name):
             tally[tag] = tally.get(tag, 0) + 1
     assert len(itacart.__all__) == 148, "surface changed; update the counts below"
-    assert tally["stub"] == 4
+    assert "stub" not in tally
+    assert tally["type"] == 19
+    assert tally["no-arguments"] == 4
     assert tally["consumer"] >= 50
     assert tally["producer"] == len(PRODUCER_NAMES)
 
 
 def test_the_coverage_exclusion_is_pinned_to_the_stubs_it_excuses() -> None:
-    """``exclude_lines`` removes ten lines, and only these ten.
+    """No stub survives, and no exclusion excuses one.
 
-    The exclusion for ``raise NotImplementedError`` is invisible in the
-    coverage report: it shrinks the denominator rather than showing a
-    miss, so a new stub anywhere in the package would silently stop
-    being measured. Counting the lines per file turns that into a
-    failure, and the count has to fall to zero as the stubs are
-    implemented rather than being adjusted upward.
+    The exclusion for ``raise NotImplementedError`` was invisible in the
+    coverage report: it shrank the denominator rather than showing a miss,
+    so a new stub anywhere in the package would silently stop being
+    measured. The count had to fall to zero as the stubs were implemented
+    rather than be adjusted upward, and it has. Both halves are asserted
+    here -- no such line in the package, and no such entry in the
+    configuration -- because either one alone could return without the
+    other noticing.
     """
     import pathlib
 
@@ -200,7 +203,15 @@ def test_the_coverage_exclusion_is_pinned_to_the_stubs_it_excuses() -> None:
         for path in sorted(root.rglob("*.py"))
         if "raise NotImplementedError" in path.read_text()
     }
-    assert counted == {"engine.py": 10}
+    assert counted == {}
+
+    project = root.parent.parent / "pyproject.toml"
+    if project.is_file():
+        import tomllib
+
+        configured = tomllib.loads(project.read_text())
+        excluded = configured["tool"]["coverage"]["report"]["exclude_lines"]
+        assert "raise NotImplementedError" not in excluded
 
 
 def test_the_stub_exemption_expires_by_itself() -> None:
