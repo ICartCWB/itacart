@@ -104,9 +104,10 @@ markers = [
 
 [tool.coverage.report]
 # "raise NotImplementedError" stays for now, and the reason is written
-# down because the exclusion is otherwise invisible: it removes fifteen
-# lines from the denominator, ten in engine.py and five in interop.py,
-# all of them stubs waiting for their phase. The count is pinned in
+# down because the exclusion is otherwise invisible: it removes ten
+# lines from the denominator, all of them in engine.py, all of them
+# stubs waiting for their phase. The five it once removed from
+# interop.py are gone because that module is implemented. The count is pinned in
 # tests/unit/test_totality.py, so a sixteenth cannot appear unnoticed,
 # and the coverage threshold in CI turns red the day those files are
 # implemented without tests. Deleting the entry belongs to the phase

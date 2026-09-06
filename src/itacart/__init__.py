@@ -142,6 +142,8 @@ from .interop import (
     cells_to_geojson,
     cells_to_wkt,
     from_geodataframe,
+    from_geojson,
+    recover_from_geojson,
     to_geodataframe,
 )
 from .metrics import cell_base_angle, compactness, normalized_cell_area
@@ -406,6 +408,8 @@ __all__ = [
     "cells_to_wkt",
     "to_geodataframe",
     "from_geodataframe",
+    "from_geojson",
+    "recover_from_geojson",
     # engine
     "ITACaRT",
     "describe",

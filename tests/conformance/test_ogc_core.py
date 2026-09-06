@@ -131,10 +131,58 @@ class TestCore:
         assert itacart.grid_distance(cell, "NE(0505/0303)") == 8
         assert len(itacart.cell_to_edges(cell)) == 4
 
-    @pytest.mark.xfail(raises=NotImplementedError, reason="stub")
     def test_req_18_19_interoperability(self) -> None:
-        """Cells export to GeoJSON and WKT."""
-        raise NotImplementedError
+        """Cells export to GeoJSON and WKT, and come back.
+
+        Completed by F9b. The requirement names two encodings, and the
+        paper's compliance table marks them met by design; a concrete
+        exporter is what turns that into something CI can check.
+
+        Export alone would be a weak reading. A function that emitted a
+        syntactically valid FeatureCollection of the wrong polygons would
+        pass it, so the round trip is asserted as well: the indices come
+        back out of the file exactly, because they are written into the
+        Feature ``id`` that section 3.2 of RFC 7946 reserves for exactly
+        this, and refilling an exported polygon at its own resolution
+        returns the cell it came from.
+
+        Both seams are included rather than an interior sample. The
+        meridian triangle and the polar cap are where a naive exporter
+        produces valid GeoJSON that means the wrong thing, so a
+        requirement about interoperability that never left the interior
+        would be measuring the easy half.
+        """
+        from shapely.geometry import shape
+        from shapely.wkt import loads as wkt_loads
+
+        cells = ["NE(0500/0300)", "NE(0000/0300)", "NE(0000/1000)"]
+        index = itacart.compose(cells)
+
+        collection = itacart.cells_to_geojson(index)
+        assert collection["type"] == "FeatureCollection"
+        assert len(collection["features"]) == 3
+        for feature, cell in zip(collection["features"], cells):
+            assert feature["type"] == "Feature"
+            assert feature["id"] == cell
+            assert feature["properties"]["itacart_index"] == cell
+            geometry = shape(feature["geometry"])
+            assert geometry.is_valid
+            assert geometry.exterior.is_ccw
+
+        assert itacart.recover_from_geojson(collection) == cells
+
+        single = itacart.cell_to_wkt(cells[0])
+        assert isinstance(single, str)
+        assert wkt_loads(single).geom_type == "Polygon"
+
+        many = itacart.cell_to_wkt(index)
+        assert isinstance(many, list) and len(many) == 3
+
+        merged = itacart.cells_to_wkt(index)
+        assert wkt_loads(merged).geom_type == "GeometryCollection"
+
+        ordinary = itacart.cells_to_geojson(cells[0])
+        assert itacart.from_geojson(ordinary, 1) == [cells[0]]
 
 
 class TestEAERS:

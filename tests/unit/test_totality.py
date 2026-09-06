@@ -26,6 +26,7 @@ declared, because a green table with no counts hides an empty bucket.
 from __future__ import annotations
 
 import inspect
+import sys
 from typing import Any, Callable, Iterator
 
 import pytest
@@ -61,15 +62,26 @@ PRODUCER_NAMES = (
 #: assertion, not a licence: see the test that keeps it honest.
 UNIMPLEMENTED_STUBS = (
     "ITACaRT",
-    "cell_to_wkt",
-    "cells_to_geojson",
-    "cells_to_wkt",
     "conformance",
     "crs",
     "describe",
-    "from_geodataframe",
-    "to_geodataframe",
 )
+
+#: Consumers that refuse the *environment* before they ever look at the
+#: index. They stay in the census, because they are implemented and their
+#: signature is real, but they are outside the escape sweep: the sweep asks
+#: whether a produced index makes a consumer raise something the package
+#: does not own, and a missing optional extra is not an answer to that
+#: question. Leaving one in would make the sweep report thirty-five escapes
+#: in an environment without the extra and none in an environment with it,
+#: which measures pip rather than the surface.
+#:
+#: This is an assertion and not a licence, exactly like the stub exemption
+#: above: ``test_the_optional_extra_exemption_is_earned`` blocks the import
+#: and requires each name here to actually raise ``ImportError``, so a
+#: function that stops needing the extra falls out of the exemption on the
+#: day it stops needing it.
+NEEDS_OPTIONAL_EXTRA = ("to_geodataframe",)
 
 #: Second and later arguments for the consumers that require them. The
 #: table's completeness is asserted, so a consumer that grows a required
@@ -141,7 +153,9 @@ def _consumers() -> list[str]:
     return [
         name
         for name, _ in _public_callables()
-        if "consumer" in _classify(name) and "stub" not in _classify(name)
+        if "consumer" in _classify(name)
+        and "stub" not in _classify(name)
+        and name not in NEEDS_OPTIONAL_EXTRA
     ]
 
 
@@ -162,14 +176,14 @@ def test_the_census_reaches_the_whole_surface() -> None:
     for name in itacart.__all__:
         for tag in _classify(name):
             tally[tag] = tally.get(tag, 0) + 1
-    assert len(itacart.__all__) == 146, "surface changed; update the counts below"
-    assert tally["stub"] == 9
+    assert len(itacart.__all__) == 148, "surface changed; update the counts below"
+    assert tally["stub"] == 4
     assert tally["consumer"] >= 50
     assert tally["producer"] == len(PRODUCER_NAMES)
 
 
 def test_the_coverage_exclusion_is_pinned_to_the_stubs_it_excuses() -> None:
-    """``exclude_lines`` removes fifteen lines, and only these fifteen.
+    """``exclude_lines`` removes ten lines, and only these ten.
 
     The exclusion for ``raise NotImplementedError`` is invisible in the
     coverage report: it shrinks the denominator rather than showing a
@@ -186,7 +200,7 @@ def test_the_coverage_exclusion_is_pinned_to_the_stubs_it_excuses() -> None:
         for path in sorted(root.rglob("*.py"))
         if "raise NotImplementedError" in path.read_text()
     }
-    assert counted == {"engine.py": 10, "interop.py": 5}
+    assert counted == {"engine.py": 10}
 
 
 def test_the_stub_exemption_expires_by_itself() -> None:
@@ -218,6 +232,53 @@ def _call_with_anything(function: Callable[..., Any]) -> Any:
         in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD)
     ]
     return function(*(["NE(0001/0000)"] * len(required)))
+
+
+def test_the_optional_extra_exemption_is_earned() -> None:
+    """Every exempt name must genuinely fail without its optional extra.
+
+    The exemption is measured rather than asserted from outside: the
+    import of the extra is blocked and the function is called with an
+    index the package itself produced, so the name earns its place by
+    raising rather than by being listed. A function that grows a fallback
+    and stops needing the extra fails here, which is how the exemption
+    ends by construction instead of by someone remembering.
+    """
+    import builtins
+
+    real_import = builtins.__import__
+
+    def blocked(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "geopandas" or name.startswith("geopandas."):
+            raise ImportError("blocked so the exemption has to be earned")
+        return real_import(name, *args, **kwargs)
+
+    produced = itacart.compose(["NE(0001/0001)", "NE(0002/0001)"])
+    monkeypatched = sys.modules.pop("geopandas", None)
+    builtins.__import__ = blocked
+    try:
+        for name in NEEDS_OPTIONAL_EXTRA:
+            with pytest.raises(ImportError):
+                _call(name, produced)
+    finally:
+        builtins.__import__ = real_import
+        if monkeypatched is not None:
+            sys.modules["geopandas"] = monkeypatched
+
+
+def test_the_exempt_consumers_are_still_in_the_census() -> None:
+    """Exemption from the sweep is not exemption from the census.
+
+    The two are different questions and the distinction is easy to lose:
+    a name dropped from the sweep for a good reason must still be
+    classified, still counted, and still bound by the assertion that the
+    buckets partition the surface.
+    """
+    for name in NEEDS_OPTIONAL_EXTRA:
+        assert name in itacart.__all__
+        assert "consumer" in _classify(name)
+        assert "stub" not in _classify(name)
+        assert name not in _consumers()
 
 
 def test_the_extra_argument_table_covers_every_consumer_that_needs_one() -> None:
