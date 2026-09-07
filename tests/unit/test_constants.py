@@ -475,7 +475,7 @@ def test_non_tokenizable_resolutions_do_not() -> None:
 
 
 # --------------------------------------------------------------------------
-# Contrato de API - os nomes que __init__.py importa precisam existir
+# API contract - every name __init__.py imports has to exist
 # --------------------------------------------------------------------------
 
 

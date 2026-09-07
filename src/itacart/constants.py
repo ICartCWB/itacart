@@ -53,7 +53,8 @@ WGS84_E: Final[float] = math.sqrt(WGS84_E2)
 WGS84_EP2: Final[float] = WGS84_E2 / (1.0 - WGS84_E2)
 """Second eccentricity squared, ``e^2 / (1 - e^2)``. Used by the meridian arc."""
 
-# Source is GeographicLib, read once through PROJ at the time this constant
+# Source is GeographicLib, read once through the PROJ toolchain at the time
+# this constant
 # was written down and recorded here since. PROJ is not a dependency of this
 # package in any extra; the provenance is kept because a constant without one
 # is a magic number. Deliberately NOT the value our
@@ -463,3 +464,31 @@ The cell index sits at the midpoint of the base and the cell is mirrored
 about the meridian, so base = 2 x height keeps its area equal to that of
 a standard parallelogram of the same resolution.
 """
+
+
+#: The module's public contract, which until now the package answered by
+#: accident. It is not a new decision about which constants deserve to be
+#: public: it is the contract that already exists, written down. Every name
+#: here is one ``__init__.py`` already imports and already lists in
+#: ``itacart.__all__``, so declaring it changes no behaviour and leaves the
+#: surface at its measured size.
+#:
+#: The fifty-odd names left out are private by declaration rather than by
+#: oversight, which is the state the previous phase asked for and could not
+#: express. Promoting one later is additive and breaks nothing; that is why
+#: the conservative list is the safe one to freeze at v1.
+__all__ = [
+    "ANALYSIS_SCALE",
+    "CELL_AREA_M2",
+    "CELL_SIZE_M",
+    "EXTENSION_ZONES",
+    "MAX_RESOLUTION",
+    "MIN_RESOLUTION",
+    "QUADRANTS",
+    "SINUSOIDAL_PROJ",
+    "VISUALIZATION_SCALE",
+    "WGS84_A",
+    "WGS84_E2",
+    "WGS84_F",
+    "refinement_alphabet",
+]

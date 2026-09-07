@@ -250,7 +250,13 @@ def get_neighbor(index: str, direction: Direction) -> str | None | list[str | No
         for a single cell; or a positionally aligned list.
 
     Raises:
-        ValueError: If ``direction`` is not one of the eight.
+        ValueError: If ``direction`` is not one of the eight. An invalid
+            member of a closed vocabulary is a caller mistake, not a
+            statement about a cell, and the package refuses that class with
+            the built-in exception everywhere it occurs: ``containment``,
+            ``coverage``, ``edge_model``, ``zone``, ``direction`` and
+            ``metric``. The package's own hierarchy is reserved for what is
+            wrong with an index or with the domain.
         ResolutionError: If the cell is not at resolution 1. Descent through
             the refinement alphabets is not yet implemented here.
         DomainError: If the cell sits in the geometric exception set, where
@@ -1337,17 +1343,25 @@ def grid_distance(origin: str, destination: str, metric: Metric = "chebyshev") -
         Step count, zero when the cells coincide.
 
     Raises:
+        NonAtomicIndexError: If either index addresses more than one cell.
+            Checked before the identity short circuit, so that two equal
+            non-atomic spellings are refused rather than answered with zero.
         ResolutionError: If the cells sit at different resolutions, or are
             quadrants.
         DomainError: If a path cannot be resolved across the boundary
             between the cells, which includes either cell being a trapezoid
             of the last addressable column.
-        ValueError: If ``metric`` is unknown.
+        ValueError: If ``metric`` is not one of the two lattice metrics.
+            An invalid enumerated argument is a caller mistake rather than a
+            statement about a cell, and the package refuses that class with
+            the built-in exception throughout; see ``get_neighbor``.
     """
     if metric not in ("chebyshev", "manhattan"):
         raise ValueError(
             f"{metric!r} is not a lattice metric; expected chebyshev or manhattan"
         )
+    for cell in (origin, destination):
+        split_components(cell)
     if get_resolution(origin) != get_resolution(destination):
         raise ResolutionError(
             f"{origin!r} and {destination!r} sit at different resolutions; grid "
@@ -1453,12 +1467,12 @@ def cells_to_directed_edge(origin: str, destination: str) -> str | list[str]:
         An edge identifier for a single pair, or a positionally aligned list.
 
     Raises:
-        ValueError: If the two indices hold different cell counts.
-        DomainError: If any pair is not edge-adjacent.
+        DomainError: If the two indices hold different cell counts, or if
+            any pair is not edge-adjacent.
     """
     origins, destinations = _atoms(origin), _atoms(destination)
     if len(origins) != len(destinations):
-        raise ValueError(
+        raise DomainError(
             f"{len(origins)} origins against {len(destinations)} destinations; "
             "the two indices must hold the same number of cells"
         )

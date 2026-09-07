@@ -9,6 +9,8 @@ error already got right.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from shapely.affinity import translate
 from shapely.geometry import Polygon
@@ -17,7 +19,12 @@ from shapely.ops import snap
 import itacart
 from itacart import topology
 from itacart.boundary import ZONE_ROWS, last_lattice_column
-from itacart.exceptions import DomainError, InvalidIndexError, ResolutionError
+from itacart.exceptions import (
+    DomainError,
+    InvalidIndexError,
+    NonAtomicIndexError,
+    ResolutionError,
+)
 from itacart.hierarchy import _parent_cell
 from itacart.index import join_components, split_components
 
@@ -821,7 +828,14 @@ def test_directed_edges_pair_by_position() -> None:
 
 
 def test_mismatched_counts_are_refused() -> None:
-    with pytest.raises(ValueError, match="same number of cells"):
+    """``DomainError`` since the bare-exception family was closed.
+
+    The type changed on purpose and is not a ``ValueError`` any more, so a
+    caller catching the old one catches nothing. That is the whole point:
+    the two siblings over this argument shape always refused with a type the
+    package owns, and this one now does too.
+    """
+    with pytest.raises(DomainError, match="same number of cells"):
         topology.cells_to_directed_edge("NE(0500/0300,0501/0300)", "NE(0499/0300)")
 
 
@@ -1305,3 +1319,76 @@ def test_a_step_inside_one_frame_is_never_checked_against_geometry() -> None:
     assert not topology._changes_frame("NE(0500/0300(1(A1)))", "NE(0499/0300(2(A5)))")
     assert topology._changes_frame("NE(0000/0300)", "NW(0001/0300)")
     assert topology._changes_frame("NE(0001/0999)", "NE(0000/1000)")
+
+
+# --------------------------------------------------------------------------
+# The bare-exception family, closed as a family
+# --------------------------------------------------------------------------
+
+
+class TestRefusalsStayInsideTheHierarchy:
+    """Three refusals that the package used to make from outside its own types.
+
+    The family goes back to the first phase, and repairing one member at a
+    time had already failed three times. What settles it is a line, not a
+    list: this hierarchy answers for what is wrong with an *index* or with
+    the *domain*, and the built-in exceptions answer for an invalid value of
+    an enumerated argument. Measured over every bare raise in ``src`` at the
+    time the line was drawn, that rule described thirteen of fourteen sites
+    already, and the fourteenth is the one repaired below.
+    """
+
+    COMPOSITE = "NE(0001/0001,0002/0001)"
+    ATOM = "NE(0001/0000)"
+
+    def test_a_cardinality_mismatch_is_refused_by_the_package(self) -> None:
+        """The last site where a bare exception refused an index.
+
+        Its two siblings over the same argument shape already refused with
+        ``NonAtomicIndexError``; this one raised ``ValueError`` and said so
+        in its docstring, which made it a rule to revisit rather than an
+        oversight. ``DomainError`` is the type the same function already
+        used for the other way a pair of cells can be wrong.
+        """
+        with pytest.raises(DomainError):
+            itacart.cells_to_directed_edge(self.COMPOSITE, self.ATOM)
+
+    def test_two_equal_non_atomic_spellings_are_refused_not_answered(self) -> None:
+        """The identity short circuit used to run before the atomicity check.
+
+        ``grid_distance(x, x)`` returned zero for an index addressing two
+        cells, while every other pairing of the same index refused and the
+        sibling predicate refused as well. Answering a question about a
+        thing that is not a cell is worse than refusing it, because zero is
+        a plausible number.
+        """
+        with pytest.raises(NonAtomicIndexError):
+            itacart.grid_distance(self.COMPOSITE, self.COMPOSITE)
+
+    def test_the_identity_short_circuit_still_works_for_a_real_cell(self) -> None:
+        """The repair moved the guard, it did not remove the short circuit."""
+        assert itacart.grid_distance(self.ATOM, self.ATOM) == 0
+
+    @pytest.mark.parametrize(
+        "call",
+        (
+            lambda: itacart.get_neighbor("NE(0500/0300)", "east"),
+            lambda: itacart.grid_distance("NE(0001/0001)", "NE(0002/0001)", "euclid"),
+        ),
+    )
+    def test_an_invalid_enumerated_argument_stays_a_value_error(
+        self, call: Any
+    ) -> None:
+        """Declared, not repaired, and the precedent is why.
+
+        ``direction`` and ``metric`` are members of closed vocabularies, and
+        so are ``containment``, ``coverage``, ``zone`` and ``edge_model``.
+        All six refuse with ``ValueError``. Moving one of them into the
+        package hierarchy would make it the only argument of its class to
+        behave differently, and would leave ``metric`` refusing one way in
+        the very function whose ``direction`` refused the other. The line is
+        between an index and an adjustment, not between ``ValueError`` and
+        the rest.
+        """
+        with pytest.raises(ValueError):
+            call()

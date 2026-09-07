@@ -521,15 +521,20 @@ def _call(name: str, argument: str) -> None:
 #: where an expectation marker only says that something is, and lets a
 #: worsening go on passing.
 #:
-#: ``cells_to_directed_edge`` refuses a cardinality mismatch with a bare
-#: ``ValueError``. Its two siblings over the same argument shape,
-#: ``are_neighbor_cells`` and ``grid_distance``, refuse the identical
-#: situation with ``NonAtomicIndexError``. The docstring declares the
-#: ``ValueError``, so it was written deliberately; that makes it a rule to
-#: revisit rather than an oversight to patch here.
-KNOWN_ESCAPES: dict[tuple[str, str], int] = {
-    ("cells_to_directed_edge", "ValueError"): 11,
-}
+#: Empty, and kept rather than removed. Zero is an exemption that expired
+#: and can still be checked; absence is an assertion nobody makes any more,
+#: which is the reasoning of the stub table above it.
+#:
+#: It held one entry until this phase. ``cells_to_directed_edge`` refused a
+#: cardinality mismatch with a bare ``ValueError`` while its two siblings
+#: over the same argument shape refused the identical situation with
+#: ``NonAtomicIndexError``; it now refuses with ``DomainError``, the type it
+#: already used for the other way a pair of cells can be wrong. The rule the
+#: repair settles is that this hierarchy answers for what is wrong with an
+#: index or with the domain, and the built-in exceptions answer for an
+#: invalid enumerated argument, which no producer emits and this corpus
+#: therefore cannot reach.
+KNOWN_ESCAPES: dict[tuple[str, str], int] = {}
 
 
 def _escapes_over(labels: list[str]) -> tuple[dict[tuple[str, str], int], list[str]]:

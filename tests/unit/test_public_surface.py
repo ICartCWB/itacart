@@ -28,6 +28,7 @@ from itacart.exceptions import InvalidIndexError
 CONTRACT_MODULES = (
     "boundary",
     "cells",
+    "constants",
     "engine",
     "exceptions",
     "geodesy",
@@ -43,10 +44,11 @@ CONTRACT_MODULES = (
     "topology",
 )
 
-#: The one submodule that declares no ``__all__``, so the invariant
-#: cannot reach it. Its public surface is whatever the package happens to
-#: re-export, which is a contract nobody wrote down.
-MODULES_WITHOUT_CONTRACT = ("constants",)
+#: Empty since ``constants`` gained its ``__all__``. Kept rather than
+#: deleted, because ``test_every_submodule_is_listed`` needs somewhere to
+#: account for a module that deliberately declares no contract, and an
+#: empty tuple says "there is none" where a missing name would say nothing.
+MODULES_WITHOUT_CONTRACT: tuple[str, ...] = ()
 
 
 def _module(name: str) -> ModuleType:
@@ -103,14 +105,28 @@ def test_every_submodule_is_listed() -> None:
 
 @pytest.mark.parametrize("name", MODULES_WITHOUT_CONTRACT)
 def test_the_uncovered_module_is_still_uncovered(name: str) -> None:
-    """Fails the day the gap is closed, which is the signal to close it.
-
-    Constants has no ``__all__``, so which of its names are public is a
-    question the package answers by accident. Giving it one is a decision
-    about the public surface and belongs to whoever makes that decision,
-    not here; this test makes sure the gap cannot be forgotten.
-    """
+    """Any module left outside the invariant really declares no contract."""
     assert getattr(_module(name), "__all__", None) is None
+
+
+def test_the_declared_contract_of_constants_is_what_the_package_re_exports() -> None:
+    """The gap closed without deciding anything new about the surface.
+
+    ``constants`` was the one module whose public names were whatever the
+    package happened to re-export. Its ``__all__`` is exactly that set,
+    measured rather than chosen, so the contract became written without
+    becoming different. The assertion is equality: promoting a constant
+    later has to come here and be seen, and quietly widening the module's
+    contract without widening the package's turns this red.
+    """
+    from itacart import constants
+
+    imported = {
+        name for name in constants.__all__ if getattr(itacart, name, None) is not None
+    }
+    assert set(constants.__all__) == imported
+    assert set(constants.__all__) <= set(itacart.__all__)
+    assert len(itacart.__all__) == 148
 
 
 # --------------------------------------------------------------------------
