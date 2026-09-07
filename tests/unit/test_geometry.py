@@ -2236,6 +2236,7 @@ def test_the_geometric_screen_never_admits_an_anomalous_cell() -> None:
     """
     side = itacart.cell_size(1)
     checked = 0
+    skipped = 0
     for quadrant in QUADRANTS:
         for row in (0, 1, 100, 451, 700):
             last = itacart.last_lattice_column(quadrant, row, side)
@@ -2251,6 +2252,16 @@ def test_the_geometric_screen_never_admits_an_anomalous_cell() -> None:
                 ]
                 while stack:
                     cell, u0, v0, cell_side, level = stack.pop()
+                    # The two sides are compared only where there is
+                    # something to compare. The column set below includes
+                    # column zero in every quadrant, and west of the prime
+                    # meridian that column names no cell, so the index side
+                    # has no truth to state there and the plane side would
+                    # be answering about the eastern twin. Skipped and
+                    # counted rather than silently walked.
+                    if not itacart.is_valid_cell(cell):
+                        skipped += 1
+                        continue
                     refused = _screen_refuses(quadrant, u0, v0, cell_side)
                     anomalous = _is_anomalous(cell)
                     checked += 1
@@ -2262,7 +2273,15 @@ def test_the_geometric_screen_never_admits_an_anomalous_cell() -> None:
                         stack.extend(
                             _children_in_lockstep(cell, u0, v0, cell_side, level)
                         )
-    assert checked > 14_000, checked
+    # Pinned by equality rather than by a floor. A containment assertion
+    # lets the number rot in both directions: a walk that quietly stops
+    # reaching cells still passes it. The skipped population is every
+    # spelling the walk builds that names no cell -- at resolution 1, ten
+    # western zero columns and twenty columns past their row; below it,
+    # 164 refined descendants that fall outside the border -- and it is
+    # pinned too, so the leniency cannot return by widening what the walk
+    # is willing to admit.
+    assert (checked, skipped) == (11086, 194)
 
 
 def test_the_screen_agrees_all_the_way_down_the_frontier() -> None:
@@ -2289,6 +2308,7 @@ def test_the_screen_agrees_all_the_way_down_the_frontier() -> None:
     base = itacart.cell_size(1)
     deepest = 0
     checked = 0
+    skipped = 0
     for quadrant in QUADRANTS:
         last = itacart.last_lattice_column(quadrant, 451, base)
         polar = max(
@@ -2298,6 +2318,11 @@ def test_the_screen_agrees_all_the_way_down_the_frontier() -> None:
         )
         for column, row in ((0, 451), (last, 451), (1, polar)):
             cell = f"{quadrant}({column:04d}/{row:04d})"
+            # Column zero west of the meridian names no cell, so there is
+            # no descent to make and no agreement to check.
+            if not itacart.is_valid_cell(cell):
+                skipped += 1
+                continue
             u0, v0, side, level = (column + row) * base, row * base, base, 1
             while level < 13:
                 children = _children_in_lockstep(cell, u0, v0, side, level)
@@ -2316,7 +2341,10 @@ def test_the_screen_agrees_all_the_way_down_the_frontier() -> None:
                 deepest = max(deepest, level)
             assert level == 13, (quadrant, column, row, level)
     assert deepest == 13, deepest
-    assert checked > 1_500, checked
+    # The two skipped are column zero at row 451 in NW and SW, where the
+    # meridian column does not exist. Equality for the same reason as the
+    # screen test above.
+    assert (checked, skipped) == (1740, 2)
 
 
 def test_a_geometry_touching_an_extension_zone_is_not_lifted() -> None:

@@ -952,9 +952,15 @@ def serialize_to_blob(index: str, compact: bool = True) -> bytes:
 
     Raises:
         InvalidIndexError: If the index is malformed.
+        NonExistentCellError: If any cell of the index names no cell. A
+            blob is a record of cells, so writing one for an address with
+            no cell under it would put the fold into storage, where the
+            next reader has no way left to tell.
     """
+    from .._existence import require_existing_cells
     from ..hierarchy import compact_cells
 
+    require_existing_cells(index)
     return encode_tree(compact_cells(index) if compact else index)
 
 

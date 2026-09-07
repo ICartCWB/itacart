@@ -377,6 +377,10 @@ def get_children(
     Raises:
         MaxResolutionError: If ``target_res`` exceeds resolution 13.
         ResolutionError: If ``target_res`` is not finer than the input.
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
     if target_res is not None and target_res > MAX_RESOLUTION:
         raise MaxResolutionError(

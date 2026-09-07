@@ -23,7 +23,11 @@ import pytest
 
 import itacart
 from itacart.constants import CELL_SIZE_M
-from itacart.exceptions import GeometryError, ITACaRTError
+from itacart.exceptions import (
+    GeometryError,
+    ITACaRTError,
+    NonExistentCellError,
+)
 from itacart.metrics import (
     _laea,
     _planar_area,
@@ -33,6 +37,11 @@ from itacart.metrics import (
 )
 
 QUADRANTS = ("NE", "NW", "SE", "SW")
+#: The quadrants that carry a meridian column. Column zero is the
+#: prime-meridian column and it belongs to the east: west of the
+#: meridian the count starts at column one, so a western zero column
+#: is a spelling that names no cell.
+EASTERN = ("NE", "SE")
 SIDE_1 = CELL_SIZE_M[1]
 assert SIDE_1 is not None
 ROWS = 1001
@@ -138,7 +147,7 @@ def test_the_projection_is_equal_area_where_the_cell_is_narrow() -> None:
         assert isinstance(stated, float)
         worst = max(worst, abs(measured - stated) / stated)
         checked += 1
-    assert checked == 18000
+    assert checked == 16200
     assert round(worst, 6) == 0.007467
 
     widest = "NE(0001/0999)"
@@ -221,10 +230,10 @@ def test_compactness_is_bounded_over_the_enumerated_window() -> None:
         assert isinstance(value, float)
         assert 0.0 < value <= 1.0, f"{cell} scored {value}"
         values.append(value)
-    assert len(values) == 19988
+    assert len(values) == 17988
     assert round(min(values), 6) == 0.094971
     assert round(max(values), 6) == 0.785398
-    assert refused == [f"{quadrant}(0000/1000)" for quadrant in QUADRANTS]
+    assert refused == [f"{quadrant}(0000/1000)" for quadrant in EASTERN]
 
 
 def test_the_bound_is_not_vacuous() -> None:
@@ -250,14 +259,19 @@ def test_the_bound_is_not_vacuous() -> None:
 
 
 def test_only_the_polar_caps_lack_a_simple_ring() -> None:
-    """Four cells, two caps, and the reason named at the vertex pair.
+    """Two cells, two caps, and the reason named at the vertex pair.
 
-    Both eastern and western quadrants carry a cap cell at each pole and
-    both report the whole cap, so the four cells cover two caps twice
-    over. That is recorded here as measured, not repaired: it belongs to
-    the boundary module.
+    This said four cells and two caps covered twice over, and that was
+    the leniency being read as a property of the grid. Only the eastern
+    quadrants carry a cap: the cap sits in the meridian column, column
+    zero is the meridian column, and west of the meridian the count
+    starts at one. ``NW(0000/1000)`` and ``SW(0000/1000)`` name no cell,
+    and what they used to report was the eastern cap's own geometry,
+    reached by folding. The counts are pinned against the two that exist,
+    and the two that do not are pinned as refusals so the fold cannot
+    come back unnoticed.
     """
-    northern = {"NE": (1, 2), "NW": (1, 2), "SE": (0, 2), "SW": (0, 2)}
+    northern = {"NE": (1, 2), "SE": (0, 2)}
     for quadrant, positions in northern.items():
         cap = f"{quadrant}(0000/1000)"
         ring = itacart.cell_to_boundary(cap)
@@ -271,8 +285,12 @@ def test_only_the_polar_caps_lack_a_simple_ring() -> None:
 
     north = itacart.effective_cell_area("NE(0000/1000)")
     assert isinstance(north, float)
-    assert north == itacart.effective_cell_area("NW(0000/1000)")
     assert round(north, 3) == 12139402.004
+    assert north == itacart.effective_cell_area("SE(0000/1000)")
+
+    for quadrant in ("NW", "SW"):
+        with pytest.raises(NonExistentCellError):
+            itacart.effective_cell_area(f"{quadrant}(0000/1000)")
 
 
 def test_the_repeated_vertex_predicate_passes_an_ordinary_ring() -> None:
@@ -486,7 +504,7 @@ def test_the_polar_cap_angle_needs_no_clause_of_its_own() -> None:
     """
     from itacart.metrics import _local_offsets, _ring_of
 
-    for quadrant in QUADRANTS:
+    for quadrant in EASTERN:
         cap = f"{quadrant}(0000/1000)"
         assert itacart.cell_shape(cap) == "triangle"
         anchor = itacart.cell_to_anchor(cap)
@@ -550,6 +568,7 @@ def test_the_border_families_carry_the_spread_and_are_enumerated() -> None:
     1 and therefore contributes nothing to the spread.
     """
     families: dict[str, list[float]] = {}
+    members: dict[str, list[str]] = {}
     interior = 0
     for cell in _enumerate_window():
         shape = itacart.cell_shape(cell)
@@ -561,10 +580,25 @@ def test_the_border_families_carry_the_spread_and_are_enumerated() -> None:
             assert ratio == 1.0
             continue
         families.setdefault(shape, []).append(ratio)
+        members.setdefault(shape, []).append(cell)
 
     assert interior == 11988
     assert len(families["trapezoid"]) == 4000
-    assert len(families["triangle"]) == 4004
+    assert len(families["triangle"]) == 2002
+
+    # The triangle count was 4004, and half of it was spelling rather than
+    # grid: the western zero column folded onto its eastern twin and was
+    # counted a second time. The number is decomposed here rather than
+    # left bare, because a count whose scope is not said is a trap set for
+    # whoever reads it next. Two thousand meridian triangles over rows 0
+    # to 999 in the two eastern quadrants, plus the two polar caps at row
+    # 1000, all of them in column zero.
+    triangles_seen = members["triangle"]
+    assert {cell[:2] for cell in triangles_seen} == set(EASTERN)
+    assert {cell[3:7] for cell in triangles_seen} == {"0000"}
+    caps = [cell for cell in triangles_seen if int(cell[8:12]) == 1000]
+    assert len(caps) == 2
+    assert len(triangles_seen) - len(caps) == 2000
 
     trapezoids = families["trapezoid"]
     assert round(min(trapezoids), 6) == 0.032263
@@ -575,7 +609,13 @@ def test_the_border_families_carry_the_spread_and_are_enumerated() -> None:
     triangles = families["triangle"]
     assert round(min(triangles), 6) == 0.121394
     assert max(triangles) == 1.0
-    assert round(statistics.stdev(triangles), 6) == 0.027760
+    # 0.027760 was this statistic over a sample that counted every
+    # meridian triangle twice. The spread itself did not move: every
+    # phantom carried a ratio identical to its twin's, so the minimum and
+    # the maximum are unchanged and the whole difference is the n-1
+    # correction, sqrt(4003/4002) applied to the old figure. Measured
+    # rather than argued, and it agrees to nine decimals.
+    assert round(statistics.stdev(triangles), 6) == 0.027763
 
 
 # --------------------------------------------------------------------------

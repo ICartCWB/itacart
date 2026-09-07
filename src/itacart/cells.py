@@ -46,6 +46,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
+from ._existence import require_existing_cells
 from .constants import (
     ANTEMERIDIAN_LON,
     MAX_RESOLUTION,
@@ -542,7 +543,14 @@ def is_quadrant_boundary_cell(cell: str) -> bool | list[bool]:
 
     Returns:
         A boolean for a single cell, or a positionally aligned list.
+
+    Raises:
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(cell)
     values = []
     for atom in iter_cells(cell):
         quadrant = split_components(atom)[0]
@@ -587,7 +595,12 @@ def cell_to_anchor(cell: str) -> tuple[float, float] | list[tuple[float, float]]
     Raises:
         ResolutionError: If the index addresses a whole quadrant, which
             has no anchor.
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(cell)
     from .boundary import to_geodetic
 
     values = [to_geodetic(*_anchor_on_plane_any(atom)) for atom in iter_cells(cell)]
@@ -605,7 +618,14 @@ def cell_to_sinusoidal(
     Returns:
         ``(x, y)`` in metres for a single cell, or a positionally aligned
         list.
+
+    Raises:
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(cell)
     values = [_anchor_on_plane_any(atom) for atom in iter_cells(cell)]
     return _per_cell(cell, list(values))  # type: ignore[return-value]
 
@@ -636,6 +656,7 @@ def cell_to_centroid(cell: str) -> tuple[float, float] | list[tuple[float, float
     Raises:
         NonExistentCellError: If the cell has no area in the domain.
     """
+    require_existing_cells(cell)
     from .boundary import plane_ring, ring_centroid, to_geodetic
 
     values = []
@@ -686,6 +707,19 @@ def cell_to_boundary(
     Raises:
         NonExistentCellError: If the cell has no area in the domain.
     """
+    require_existing_cells(cell)
+    return _cell_to_boundary(cell, close)
+
+
+def _cell_to_boundary(
+    cell: str, close: bool = False
+) -> list[tuple[float, float]] | list[list[tuple[float, float]]]:
+    """Interior twin of :func:`cell_to_boundary`, without the existence guard.
+
+    A topological computation reaches this one. It walks candidate
+    lattice coordinates that may name no cell, and refusing there
+    would refuse the search rather than the answer.
+    """
     from .boundary import plane_ring, to_geodetic
 
     values = []
@@ -710,7 +744,14 @@ def cell_to_polygon(cell: str) -> "Polygon | list[Polygon]":
 
     Returns:
         A polygon for a single cell, or a positionally aligned list.
+
+    Raises:
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(cell)
     from shapely.geometry import Polygon
 
     rings = cell_to_boundary(cell, close=True)

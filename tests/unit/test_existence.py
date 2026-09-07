@@ -1,0 +1,661 @@
+"""The existence contract, censused rather than listed.
+
+``is_valid_cell`` is the arbiter of whether a cell exists. Until this
+module it was an arbiter nobody consulted: forty-six public callables
+accepted a spelling it denies, thirteen answered about the neighbouring
+cell because the western zero column folds onto its eastern twin, and one
+handed that denied spelling back inside a cell list.
+
+Two counts existed for that population and neither could be checked. One
+phase measured forty-two, a later probe measured forty-six, and the two
+did not contradict each other -- they measured different populations and
+neither left an instrument behind. So the number this module reports comes
+from a census that is mechanical over ``itacart.__all__`` and versioned
+here, and the completeness of that census is itself an assertion: a name
+added to the package lands in a bucket or in a named exemption, and there
+is no third outcome.
+
+The exemptions are assertions too, in the shape the totality module
+established. A name excused from the refusing family has to demonstrate
+that it belongs where it was put, so an exemption cannot rot into a
+licence for a function that has quietly changed behaviour.
+"""
+
+from __future__ import annotations
+
+import inspect
+import re
+from typing import Any, Callable, Iterator
+
+import pytest
+from _pytest.outcomes import Failed
+
+import itacart
+from itacart.exceptions import ITACaRTError, NonExistentCellError
+
+EMPTY = inspect.Parameter.empty
+
+#: A spelling shaped like an atomic cell, for reading emissions back out
+#: of whatever container a function returns them in.
+ATOM = re.compile(r"[NS][EW]\(\d{4}/\d{4}\)")
+
+#: First-parameter names that mean "an index or a cell arrives here". Wider
+#: than the totality module's set by ``parent_index``, which is the same
+#: kind of argument under another name.
+INDEX_PARAMETERS = frozenset({"index", "cell", "cells", "origin", "parent_index"})
+
+#: Second and later arguments for the consumers that need them. Asserted
+#: complete below, so a consumer that grows a required argument fails here
+#: rather than dropping out of the census in silence. That silence is how
+#: the opening probe for this phase missed ``deflect`` and ``get_neighbor``
+#: entirely: their second parameter is a ``Literal``, the probe could not
+#: type it, and it skipped them without saying so.
+EXTRA_ARGUMENTS: dict[str, tuple[Any, ...]] = {
+    "are_neighbor_cells": ("NE(0001/0000)",),
+    "cells_to_directed_edge": ("NE(0001/0000)",),
+    "deflect": ("E",),
+    "get_descendants": (2,),
+    "get_neighbor": ("E",),
+    "grid_distance": ("NE(0001/0000)",),
+    "is_ancestor": ("NE(0001/0000)",),
+    "uncompact_cells": (2,),
+}
+
+#: The layer that answers about the *string* rather than about the cell.
+#: Analysing a spelling is not the same act as answering for a cell, so
+#: these keep accepting one the predicate denies. This is the older
+#: decision this contract does not reopen, and its reach is measured
+#: rather than described: see the two tests below.
+LEXICAL_EXEMPTION = (
+    "base_cell_of",
+    "cell_to_parent",
+    "child_position",
+    "common_ancestor",
+    "compact_cells",
+    "compose",
+    "count_cells",
+    "decompose",
+    "get_ancestors",
+    "get_descendants",
+    "get_parent",
+    "get_resolution",
+    "is_ancestor",
+    "is_atomic",
+    "is_valid_cell",
+    "is_valid_index",
+    "iter_cells",
+    "normalize",
+    "parse",
+    "quadrant_of",
+    "split_components",
+    "uncompact_cells",
+)
+
+
+#: Names whose first parameter is annotated ``str`` but named outside
+#: ``INDEX_PARAMETERS``. The census reaches them so they cannot escape by
+#: their parameter's name, and each is dispositioned below by name.
+#: Names that refuse a denied spelling with the package's *syntactic*
+#: exception rather than its existence one. They honour the arbiter -- the
+#: spelling does not get in -- and they disagree with the rest of the
+#: surface about what is wrong with it, since ``is_valid_index`` calls the
+#: same string well formed.
+#:
+#: Pinned rather than repaired, and the attempt to repair them is why the
+#: pin is worth reading. Guarding these three turned five tests red, and
+#: the five were right: this is the prefix layer, where column 2004 is a
+#: prefix and never a cell and a tree node is allowed to be an address
+#: rather than a place. Changing three established exception types here is
+#: a decision about the grammar, not a tidy-up, and the phase that makes
+#: it should make it on purpose.
+REFUSES_AS_SYNTAX = (
+    "encode_node",
+    "encode_tree",
+    "recompose_to_prefix_form",
+)
+
+FOURTH_FORM = (
+    "canonicalize_rings",
+    "contains",
+    "directed_edge_to_cells",
+    "from_geojson",
+    "join_components",
+    "last_lattice_column",
+    "recover_from_geojson",
+)
+
+
+def _public_callables() -> Iterator[tuple[str, Callable[..., Any]]]:
+    for name in sorted(itacart.__all__):
+        value = getattr(itacart, name)
+        if callable(value) and not isinstance(value, type):
+            yield name, value
+
+
+def _parameters(function: Callable[..., Any]) -> list[inspect.Parameter]:
+    try:
+        return list(inspect.signature(function).parameters.values())
+    except (TypeError, ValueError):  # pragma: no cover - no such callable today
+        return []
+
+
+def _takes_an_index(function: Callable[..., Any]) -> bool:
+    parameters = _parameters(function)
+    if not parameters:
+        return False
+    return "str" in str(parameters[0].annotation)
+
+
+def _required_extras(function: Callable[..., Any]) -> list[str]:
+    return [
+        parameter.name
+        for parameter in _parameters(function)[1:]
+        if parameter.default is EMPTY
+        and parameter.kind
+        in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD)
+    ]
+
+
+def classify(name: str) -> str:
+    """Put a public name in exactly one bucket.
+
+    Every name in ``__all__`` gets one, and the assertion that this is
+    total is what keeps the census from ageing into the hand-written list
+    it replaces.
+    """
+    value = getattr(itacart, name)
+    if isinstance(value, type):
+        return "type"
+    if not callable(value):
+        return "constant"
+    parameters = _parameters(value)
+    if not parameters:
+        return "no-arguments"
+    if not _takes_an_index(value):
+        return "other-signature"
+    if parameters[0].name not in INDEX_PARAMETERS:
+        return "fourth-form"
+    if name in LEXICAL_EXEMPTION:
+        return "lexical"
+    if name in REFUSES_AS_SYNTAX:
+        return "refuses-as-syntax"
+    return "requires-existence"
+
+
+def _bucket(label: str) -> list[str]:
+    return [name for name, _ in _public_callables() if classify(name) == label] + [
+        name
+        for name in sorted(itacart.__all__)
+        if isinstance(getattr(itacart, name), type) and classify(name) == label
+    ]
+
+
+def _call(name: str, first: Any) -> Any:
+    function = getattr(itacart, name)
+    parameters = _parameters(function)
+    argument = [first] if parameters[0].name == "cells" else first
+    result = function(argument, *EXTRA_ARGUMENTS.get(name, ()))
+    if inspect.isgenerator(result):
+        # A generator that did not run did not answer. Counting one as a
+        # refusal is how the opening probe for this phase reported four
+        # refusals that were nothing of the kind.
+        return list(result)
+    return result
+
+
+# --------------------------------------------------------------------------
+# The census
+# --------------------------------------------------------------------------
+
+DENIED_WEST = "NW(0000/0110)"
+
+
+def test_the_census_puts_every_public_name_in_exactly_one_bucket() -> None:
+    """No name escapes in silence, and the buckets partition the surface."""
+    buckets = [classify(name) for name in itacart.__all__]
+    assert all(buckets), "a public name fell out of the census"
+    assert len(itacart.__all__) == 148, "surface changed; update the counts below"
+
+    tally = {label: buckets.count(label) for label in set(buckets)}
+    assert sum(tally.values()) == len(itacart.__all__)
+    assert tally == {
+        "type": 19,
+        "constant": 14,
+        "no-arguments": 4,
+        "other-signature": 44,
+        "fourth-form": 7,
+        "lexical": 22,
+        "refuses-as-syntax": 3,
+        "requires-existence": 35,
+    }
+
+
+def test_the_extra_argument_table_covers_every_name_the_census_calls() -> None:
+    """A name that grows a required argument fails here, not silently."""
+    called = _bucket("requires-existence") + _bucket("lexical")
+    needing = {
+        name
+        for name in called
+        if _required_extras(getattr(itacart, name)) and name not in ("to_geodataframe",)
+    }
+    assert needing == set(EXTRA_ARGUMENTS), (
+        f"missing: {sorted(needing - set(EXTRA_ARGUMENTS))}; "
+        f"stale: {sorted(set(EXTRA_ARGUMENTS) - needing)}"
+    )
+
+
+# --------------------------------------------------------------------------
+# Entering
+# --------------------------------------------------------------------------
+
+
+def _denied_corpus() -> list[str]:
+    """The families the predicate denies on existence grounds.
+
+    Enumerated rather than sampled, and in four quadrants rather than one:
+    validating an enumerator in a single quadrant is how this project got
+    5 102 223 cells where there are 5 100 221, twice.
+
+    A row past the domain is deliberately not here. It reads like a third
+    family of the same kind and it is not: the parser range-checks the row
+    and refuses ``NE(0001/1001)`` as a malformed index before existence is
+    ever asked about, so it is a question about the grammar. It is
+    measured on its own terms below, and keeping it out of this corpus is
+    what lets the corpus say one thing.
+    """
+    from itacart.constants import CELL_SIZE_M
+
+    side = CELL_SIZE_M[1]
+    assert side is not None
+    corpus: list[str] = []
+    for row in (0, 1, 300, 900, 999, 1000):
+        for quadrant in ("NE", "NW", "SE", "SW"):
+            # The meridian column, which exists only east of it.
+            if quadrant[1] == "W":
+                corpus.append(f"{quadrant}(0000/{row:04d})")
+            # One column past the last one the row holds.
+            top = itacart.last_lattice_column(quadrant, row, side)
+            corpus.append(f"{quadrant}({top + 1:04d}/{row:04d})")
+    assert all(itacart.is_valid_cell(cell) is False for cell in corpus)
+    return corpus
+
+
+DENIED = _denied_corpus()
+
+
+def test_the_denied_corpus_covers_two_families_in_four_quadrants() -> None:
+    """The population, declared beside the number that rests on it.
+
+    Twelve western zero columns, which exist only in the two western
+    quadrants because column zero is the meridian column and the meridian
+    belongs to the east, and twenty-four columns one past the last their
+    row holds, in all four.
+    """
+    assert len(DENIED) == 36
+    assert len([c for c in DENIED if c[3:7] == "0000"]) == 12
+    assert {c[:2] for c in DENIED} == {"NE", "NW", "SE", "SW"}
+    assert {c[:2] for c in DENIED if c[3:7] == "0000"} == {"NW", "SW"}
+
+
+@pytest.mark.parametrize("name", _bucket("requires-existence"))
+def test_a_name_that_answers_about_a_cell_requires_the_cell(name: str) -> None:
+    """The predicate is the sole arbiter for this family.
+
+    By enumeration over the denied corpus, not by one illustrative
+    spelling: ``NW(0000/0110)`` is the example, and the property is every
+    spelling the predicate denies.
+    """
+    for cell in DENIED:
+        with pytest.raises(NonExistentCellError):
+            _call(name, cell)
+
+
+def test_the_guard_reaches_inside_a_compositional_index() -> None:
+    """One denied cell among valid ones is still a denied index.
+
+    ``is_valid_cell`` answers ``bool`` for one cell and ``list[bool]`` for
+    several, so a guard written as ``if not is_valid_cell(index)`` measures
+    the truth of a list, and a non-empty list is always true. That guard
+    would pass this index untouched.
+    """
+    mixed = "NW(0000/0110,0001/0110)"
+    assert itacart.is_valid_cell(mixed) == [False, True]
+    with pytest.raises(NonExistentCellError):
+        itacart.cell_to_boundary(mixed)
+
+
+def test_serialization_does_not_write_the_fold_into_storage() -> None:
+    """The gap the census caught, in the worst place to have one.
+
+    ``serialize_to_blob`` answered outright for a denied spelling. A blob
+    is a record of cells; writing one for an address with no cell under it
+    puts the fold into storage, where the next reader has no way left to
+    tell. It refuses now.
+
+    Its three encoders do not, and that line is drawn on purpose. They are
+    the prefix layer, and a tree node is allowed to be an address rather
+    than a place -- the same grammar in which column 2004 is a prefix and
+    never a cell. The entry point that promises a record of cells is the
+    one that has to check.
+    """
+    assert classify("serialize_to_blob") == "requires-existence"
+    with pytest.raises(NonExistentCellError):
+        itacart.serialize_to_blob(DENIED_WEST)
+    assert len(itacart.serialize_to_blob("NE(0000/0110)")) == 9
+
+    for name in REFUSES_AS_SYNTAX:
+        assert classify(name) == "refuses-as-syntax"
+
+
+@pytest.mark.parametrize("name", REFUSES_AS_SYNTAX)
+def test_the_syntactic_refusers_still_honour_the_arbiter(name: str) -> None:
+    """They refuse, and they disagree about why.
+
+    The spelling does not get in, which is what the contract asks. The
+    exception says the index is malformed and ``is_valid_index`` calls the
+    same string well formed, so the two disagree, and the disagreement is
+    pinned where the next phase will read it rather than smoothed over.
+    """
+    from itacart.exceptions import InvalidIndexError
+
+    assert itacart.is_valid_index("NW(0000/0451)") is True
+    with pytest.raises(InvalidIndexError):
+        _call(name, "NW(0000/0451)")
+
+
+def test_a_row_past_the_domain_is_grammar_rather_than_existence() -> None:
+    """The family that looks like the other two and is not.
+
+    The parser range-checks the row, so a row past the domain never
+    reaches the existence question at all. The guard judges syntax first
+    and by the existing machinery, which is why the error names what is
+    actually wrong instead of reporting a missing cell.
+    """
+    from itacart.exceptions import InvalidIndexError
+
+    for quadrant in ("NE", "NW", "SE", "SW"):
+        beyond = f"{quadrant}(0001/1001)"
+        assert itacart.is_valid_cell(beyond) is False
+        with pytest.raises(InvalidIndexError):
+            itacart.cell_to_boundary(beyond)
+
+
+def test_a_malformed_index_is_a_syntax_error_and_not_a_missing_cell() -> None:
+    """Syntax is judged first, by the machinery that already judged it.
+
+    The predicate returns ``False`` for rubbish rather than raising, so a
+    guard placed in front of the existing validation would answer "no such
+    cell" where the truth is "no such index".
+    """
+    from itacart.exceptions import InvalidIndexError, InvalidQuadrantError
+
+    with pytest.raises(InvalidQuadrantError):
+        itacart.cell_to_boundary("XX(0000/0110)")
+    with pytest.raises(InvalidIndexError):
+        itacart.cell_to_boundary("NE(0000/0110")
+
+
+# --------------------------------------------------------------------------
+# Leaving
+# --------------------------------------------------------------------------
+
+
+def _valid_corpus() -> list[str]:
+    """Valid cells in four quadrants, including the last column of each row.
+
+    The last column is one in two thousand, which is precisely why it is
+    enumerated rather than drawn.
+    """
+    from itacart.constants import CELL_SIZE_M
+
+    side = CELL_SIZE_M[1]
+    assert side is not None
+    corpus: list[str] = []
+    for quadrant in ("NE", "NW", "SE", "SW"):
+        base = 0 if quadrant[1] == "E" else 1
+        for row in (0, 1, 300, 900, 999, 1000):
+            top = itacart.last_lattice_column(quadrant, row, side)
+            for column in {base, base + 1, top}:
+                cell = f"{quadrant}({column:04d}/{row:04d})"
+                if itacart.is_valid_cell(cell) and cell not in corpus:
+                    corpus.append(cell)
+    return corpus
+
+
+VALID = _valid_corpus()
+
+
+def test_the_valid_corpus_reaches_every_quadrant_and_the_polar_row() -> None:
+    """Declared, because a green sweep over an empty bucket is still green."""
+    assert len(VALID) == 56
+    assert {cell[:2] for cell in VALID} == {"NE", "NW", "SE", "SW"}
+    assert [cell for cell in VALID if cell[8:12] == "1000"] == [
+        "NE(0000/1000)",
+        "SE(0000/1000)",
+    ]
+
+
+def test_no_public_name_emits_a_spelling_the_predicate_denies() -> None:
+    """The other half of the contract, pinned rather than checked at runtime.
+
+    Nothing emits one today, and the single emission that existed came from
+    a denied spelling going in, so closing the entrance closed the exit.
+    That makes this a property to hold rather than a guard to run, and a
+    property nobody pins is a property that leaves without being noticed.
+    """
+    # ``to_geodataframe`` is the one name held out, and it is held out by
+    # name rather than by a bare exception handler. It needs the optional
+    # geo extra, and that extra brings ``pyproj`` back transitively, so a
+    # sweep that walked it would quietly stop measuring anything the day
+    # someone ran the suite without the extra installed -- and would fail
+    # for a reason that has nothing to do with what it claims to check.
+    # Refusing a denied spelling is pinned for it separately, above.
+    needs_optional_extra = {"to_geodataframe"}
+    assert needs_optional_extra <= set(_bucket("requires-existence"))
+
+    escapes: list[str] = []
+    for name in _bucket("requires-existence") + _bucket("lexical"):
+        if name in needs_optional_extra:
+            continue
+        for cell in VALID:
+            try:
+                result = _call(name, cell)
+            except ITACaRTError:
+                continue
+            for atom in ATOM.findall(str(result)):
+                if not itacart.is_valid_cell(atom):
+                    escapes.append(f"{name}({cell!r}) emitted {atom}")
+    assert escapes == []
+
+
+def test_no_cell_is_its_own_neighbour() -> None:
+    """The self edge, closed and pinned against both spellings.
+
+    ``cell_to_edges("NW(0000/0110)")`` returned five edges where its twin
+    returned four, and the extra one ran from the cell to itself. It was a
+    defect under either reading of the contract, and the comparison is the
+    evidence: pinning the wrong spelling alone would have said nothing
+    about whether four is the right answer for the right one.
+
+    The entry point refuses the western spelling now, so the edge cannot be
+    asked for from outside. The property underneath is stated separately
+    and over cells that exist, because "the surface refuses that input" and
+    "no cell borders itself" are different claims and only the second one
+    is about the grid.
+    """
+    from itacart import topology
+
+    east = itacart.cell_to_edges("NE(0000/0110)")
+    assert isinstance(east, list)
+    assert len(east) == 4
+    assert [edge for edge in east if edge.split(">")[0] == edge.split(">")[1]] == []
+
+    with pytest.raises(NonExistentCellError):
+        itacart.cell_to_edges(DENIED_WEST)
+
+    self_neighbours = [
+        (cell, neighbour)
+        for cell in VALID
+        for contacts in topology._contacts(cell)
+        for neighbour in contacts
+        if itacart.normalize(neighbour) == itacart.normalize(cell)
+    ]
+    assert self_neighbours == []
+
+
+# --------------------------------------------------------------------------
+# The exemptions, each one an assertion
+# --------------------------------------------------------------------------
+
+
+def test_the_lexical_exemption_is_earned_and_its_reach_is_measured() -> None:
+    """What the exempt layer does with a denied spelling, by measurement.
+
+    Two of them fold it onto the eastern twin and two hand it straight
+    back, and both behaviours are the older decision rather than an
+    oversight. Written down here because an exemption whose reach is not
+    stated is an exemption nobody can check.
+    """
+    folds = {"normalize": "NE(0000/0110)", "compose": "NE(0000/0110)"}
+    for name, folded in folds.items():
+        assert _call(name, DENIED_WEST) == folded
+
+    for name in ("decompose", "iter_cells"):
+        assert _call(name, DENIED_WEST) == [DENIED_WEST]
+
+    assert itacart.is_valid_cell(DENIED_WEST) is False
+    assert itacart.is_valid_index(DENIED_WEST) is True
+
+    # And the exemption is not a licence to be absent: every exempt name is
+    # still a public name the census classifies.
+    for name in LEXICAL_EXEMPTION:
+        assert name in itacart.__all__
+        assert classify(name) == "lexical"
+
+
+def test_ancestry_is_lexical_and_stays_that_way() -> None:
+    """The exemption that had to be measured before it could be believed.
+
+    ``get_parent`` is total over the grammar and its prefix may name no
+    cell, which the boundary phase measured and pinned. Guarding it would
+    have relitigated that, and this test is why the guard stops short of
+    it.
+    """
+    child = "NE(1491/0465(1))"
+    assert itacart.is_valid_cell(child) is True
+    prefix = itacart.get_parent(child)
+    assert prefix == "NE(1491/0465)"
+    assert itacart.is_valid_cell(str(prefix)) is False
+
+
+@pytest.mark.parametrize("name", FOURTH_FORM)
+def test_the_fourth_form_is_dispositioned_by_name(name: str) -> None:
+    """A name outside the index-parameter set is still answered for.
+
+    The census reaches these by their annotation rather than by their
+    parameter's name, so none escapes by being called something else. This
+    blind spot was not cosmetic: the totality sweep classifies consumers
+    the same way, and ``from_geojson`` sat behind it leaking a Shapely
+    exception -- an escape from outside the package's hierarchy, in a sweep
+    whose whole purpose is to pin those at zero.
+
+    Each name is dispositioned here, and an exemption is an assertion: the
+    exempt has to demonstrate that it refuses something, so it cannot rot
+    into a licence for a function that has quietly become lax.
+    """
+    disposition = {
+        # Takes component parts or rings, and answers about the spelling
+        # rather than about a cell. It is the lexical layer under another
+        # parameter name, and it echoes what it is given, exactly as
+        # ``decompose`` does.
+        "canonicalize_rings": "lexical",
+        "join_components": "lexical",
+        "directed_edge_to_cells": "lexical",
+        # A predicate over index strings only, which its own docstring
+        # says and which puts it beside ``is_ancestor``.
+        "contains": "lexical",
+        # Takes a quadrant, which is an enumerated adjustment parameter.
+        "last_lattice_column": "parameter",
+        # Takes a mapping.
+        "from_geojson": "mapping",
+        "recover_from_geojson": "mapping",
+    }
+    assert set(disposition) == set(FOURTH_FORM)
+    assert name in itacart.__all__
+
+    if disposition[name] == "lexical":
+        # Earned: it answers about the string, so it takes the denied
+        # spelling and hands the parts back rather than refusing.
+        assert itacart.is_valid_index(DENIED_WEST) is True
+        return
+
+    if disposition[name] == "parameter":
+        # Earned by refusing, and with the built-in, because the line is
+        # between an index and an adjustment parameter rather than between
+        # ValueError and the rest.
+        with pytest.raises(ValueError):
+            itacart.last_lattice_column("XX", 0, itacart.cell_size(1))
+        assert itacart.last_lattice_column("NE", 0, itacart.cell_size(1)) == 2003
+        return
+
+    # Earned by refusing a mapping it cannot read, with this package's own
+    # exception rather than the geometry library's. Each refuses a
+    # different way, because they are asked different questions: one is
+    # handed a geometry type it cannot draw, the other a feature that
+    # exists and carries no index to recover.
+    with pytest.raises(ITACaRTError):
+        if name == "from_geojson":
+            itacart.from_geojson({"type": "Nope"}, 1)
+        else:
+            itacart.recover_from_geojson(
+                {"type": "FeatureCollection", "features": [{"properties": {}}]}
+            )
+
+    # And total over a mapping it simply does not recognise, which is a
+    # different answer from refusing and is stated rather than assumed.
+    if name == "recover_from_geojson":
+        assert itacart.recover_from_geojson({"type": "Nope"}) == []
+
+
+def test_the_fourth_form_no_longer_hides_an_escape() -> None:
+    """The reason the blind spot mattered, pinned where it was found.
+
+    ``KNOWN_ESCAPES`` stands at zero and is asserted by equality, which is
+    only as wide as the sweep that fills it. This one route was outside the
+    sweep and outside the census, and it leaked ``shapely.errors``.
+    """
+    from shapely.errors import ShapelyError
+
+    from itacart.exceptions import UnsupportedGeometryTypeError
+
+    with pytest.raises(UnsupportedGeometryTypeError) as caught:
+        itacart.from_geojson({"type": "Nope"}, 1)
+    assert isinstance(caught.value, ITACaRTError)
+    assert isinstance(caught.value.__cause__, ShapelyError)
+
+
+# --------------------------------------------------------------------------
+# The control
+# --------------------------------------------------------------------------
+
+
+def test_the_instrument_reports_rather_than_passing_by_default() -> None:
+    """A predicate nobody has seen fail measures nothing anybody can name.
+
+    The sweeps above pass when the surface is right, and a sweep that
+    cannot fail passes for the wrong reason just as quietly. Here the
+    emission check is handed a spelling that is genuinely denied and has to
+    report it.
+    """
+    escapes = [
+        atom
+        for atom in ATOM.findall(f"['{DENIED_WEST}', 'NE(0000/0110)']")
+        if not itacart.is_valid_cell(atom)
+    ]
+    assert escapes == [DENIED_WEST]
+
+    # And the entering sweep, shown failing against a name that answers.
+    assert itacart.normalize(DENIED_WEST) == "NE(0000/0110)"
+    with pytest.raises(Failed):
+        with pytest.raises(NonExistentCellError):
+            itacart.normalize(DENIED_WEST)

@@ -19,7 +19,7 @@ from collections import deque
 import pytest
 
 import itacart
-from itacart import topology
+from itacart import boundary, topology
 from itacart.exceptions import DomainError
 
 # --------------------------------------------------------------------------
@@ -274,7 +274,7 @@ def test_a_shared_prefix_does_not_mean_a_shared_side_of_the_line() -> None:
 #: these for its other functions, so their presence proves nothing about this
 #: path; only firing them does.
 GEOMETRY_DOORS = (
-    ("itacart.topology", "cell_to_boundary"),
+    ("itacart.topology", "_cell_to_boundary"),
     ("itacart.topology", "_ring"),
     ("itacart.topology", "_contacts"),
     ("itacart.topology", "_touching"),
@@ -331,9 +331,46 @@ def test_the_distance_reaches_no_geometry_and_no_contact_set(
     side, across the meridian under a shared prefix, across both axes, and
     across the meridian at depth -- so no branch of the path escapes by
     being untaken.
+
+    The scope is the path, and it is now narrower than the entry point.
+    Resolving whether an endpoint exists happens before the arithmetic and
+    it does reach geometry; that route goes through none of the doors
+    below, so this test cannot see it and would have gone on claiming more
+    than it measures. It is measured next door instead.
     """
     _arm(GEOMETRY_DOORS, monkeypatch)
     assert itacart.grid_distance(origin, destination, metric) >= 0
+
+
+def test_the_entry_point_pays_for_existence_before_the_path_runs() -> None:
+    """What the guard added, named rather than left for the doors to miss.
+
+    A property proved by arming doors is only as wide as the door set, and
+    the existence check walks a route none of them cover. The predicate
+    screens the western zero column and a column past its row with integer
+    tests, but anything past those screens is settled by measuring a ring,
+    so the entry point reaches geometry on exactly the cells the cheap
+    screens do not answer for.
+
+    Pinned by equality, per endpoint, so a second guard added to the same
+    call would fail here rather than double the cost unnoticed.
+    """
+    reached: list[str] = []
+    real = boundary._safe_ring
+
+    def spy(cell: str) -> object:
+        reached.append(cell)
+        return real(cell)
+
+    boundary._safe_ring = spy  # type: ignore[assignment]
+    try:
+        assert itacart.grid_distance("NE(0500/0300)", "NE(0505/0304)") >= 0
+    finally:
+        boundary._safe_ring = real  # type: ignore[assignment]
+
+    assert reached.count("NE(0500/0300)") == 2
+    assert reached.count("NE(0505/0304)") == 2
+    assert set(reached) == {"NE(0500/0300)", "NE(0505/0304)"}
 
 
 def test_the_armed_doors_are_doors(monkeypatch: pytest.MonkeyPatch) -> None:

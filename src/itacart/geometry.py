@@ -1564,6 +1564,10 @@ def cells_to_geometry(
     Raises:
         UnsupportedGeometryTypeError: On unsupported types.
         GeometryError: If the cell count cannot make the type asked for.
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
     from shapely.geometry import LinearRing, LineString, MultiPoint, Point, Polygon
 

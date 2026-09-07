@@ -51,6 +51,7 @@ from __future__ import annotations
 import math
 from typing import Literal
 
+from ._existence import require_existing_cells
 from .constants import (
     ANALYSIS_SCALE,
     CELL_AREA_M2,
@@ -298,7 +299,14 @@ def effective_cell_area(cell: str) -> float | list[float]:
     Returns:
         Area in square metres for a single terminal cell, or a
         positionally aligned list when the index holds several.
+
+    Raises:
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(cell)
     from .boundary import absorbs_border, plane_ring, ring_area
 
     values = []

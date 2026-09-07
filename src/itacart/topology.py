@@ -41,14 +41,15 @@ from shapely.geometry import LineString, Polygon
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import snap
 
+from ._existence import require_existing_cells
 from .boundary import (
     ZONE_ROWS,
-    absorbs_border,
-    cell_shape,
+    _absorbs_border,
+    _cell_shape,
     is_valid_cell,
     last_lattice_column,
 )
-from .cells import cell_to_boundary
+from .cells import _cell_to_boundary
 from .exceptions import DomainError, InvalidIndexError, ResolutionError
 from .hierarchy import _parent_cell, get_children
 from .index import decompose, join_components, split_components
@@ -261,7 +262,12 @@ def get_neighbor(index: str, direction: Direction) -> str | None | list[str | No
             the refinement alphabets is not yet implemented here.
         DomainError: If the cell sits in the geometric exception set, where
             the step is real but no lexical rule names it. See :func:`deflect`.
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(index)
     if direction not in LATTICE_STEP:
         raise ValueError(
             f"{direction!r} is not a lattice direction; expected one of "
@@ -459,7 +465,7 @@ def _refinable(cell: str) -> bool:
     trapezoid keeps only the codes its clipped area still reaches, so neither
     admits the column-and-row arithmetic used below.
     """
-    return cell_shape(cell) == "parallelogram" and not absorbs_border(cell)
+    return _cell_shape(cell) == "parallelogram" and not _absorbs_border(cell)
 
 
 def _descend_neighbor(cell: str, direction: Direction) -> str | None:
@@ -497,7 +503,7 @@ def _descend_neighbor(cell: str, direction: Direction) -> str | None:
         return None
     if not _refinable(neighbour_parent):
         raise DomainError(
-            f"{neighbour_parent!r} is a {cell_shape(neighbour_parent)}; the "
+            f"{neighbour_parent!r} is a {_cell_shape(neighbour_parent)}; the "
             "refinement grid of a triangle or an absorbing trapezoid is not "
             "square, so the wrapped code would not name the right child"
         )
@@ -576,7 +582,14 @@ def deflect(cell: str, direction: Direction) -> str | None:
 
     Takes a true compass direction, like :func:`get_neighbor`. The
     lattice-frame worker behind it is :func:`_deflect_lattice`.
+
+    Raises:
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(cell)
     return _deflect_lattice(cell, _lattice_direction(cell[:2], direction))
 
 
@@ -635,11 +648,11 @@ def _is_exceptional(cell: str) -> bool:
     row = int(components[1].partition("/")[2])
     if row in ZONE_LIMIT_ROWS or row >= _POLAR_ROW:
         return True
-    return bool(absorbs_border(cell)) or cell_shape(cell) != "parallelogram"
+    return bool(_absorbs_border(cell)) or _cell_shape(cell) != "parallelogram"
 
 
 def _ring(cell: str, longitude_offset: float = 0.0) -> Polygon:
-    ring = Polygon(cell_to_boundary(cell))
+    ring = Polygon(_cell_to_boundary(cell))
     return translate(ring, xoff=longitude_offset) if longitude_offset else ring
 
 
@@ -768,7 +781,7 @@ def _side_labels(cell: str) -> list[tuple[LineString, Direction]]:
     quadrant = split_components(cell)[0]
     east_sign = 1.0 if quadrant[1] == "E" else -1.0
     pole_sign = 1.0 if quadrant[0] == "N" else -1.0
-    ring = cast(list[tuple[float, float]], cell_to_boundary(cell))
+    ring = cast(list[tuple[float, float]], _cell_to_boundary(cell))
     centre = Polygon(ring).centroid
 
     labels: list[tuple[LineString, Direction]] = []
@@ -1020,7 +1033,12 @@ def grid_disk(
         DomainError: If the disk reaches the geometric exception set, where a
             direction is multivalued and composing steps would lose cells
             silently.
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(index)
     atoms = _atoms(index)
     per_origin = [
         sorted(set().union(*_expand(atom, k_distance, metric))) for atom in atoms
@@ -1051,7 +1069,12 @@ def grid_ring(
     Raises:
         ValueError: If ``k_distance`` is negative or ``metric`` is unknown.
         DomainError: If the ring reaches the geometric exception set.
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(index)
     atoms = _atoms(index)
     per_origin = [sorted(_expand(atom, k_distance, metric)[-1]) for atom in atoms]
     return _shape_result(per_origin, dedupe, flatten, len(atoms) == 1)
@@ -1355,7 +1378,13 @@ def grid_distance(origin: str, destination: str, metric: Metric = "chebyshev") -
             An invalid enumerated argument is a caller mistake rather than a
             statement about a cell, and the package refuses that class with
             the built-in exception throughout; see ``get_neighbor``.
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(origin)
+    require_existing_cells(destination)
     if metric not in ("chebyshev", "manhattan"):
         raise ValueError(
             f"{metric!r} is not a lattice metric; expected chebyshev or manhattan"
@@ -1370,7 +1399,7 @@ def grid_distance(origin: str, destination: str, metric: Metric = "chebyshev") -
     if get_resolution(origin) < 1:
         raise ResolutionError("a quadrant has no position on the lattice")
     for cell in (origin, destination):
-        if cell_shape(cell) == "trapezoid":
+        if _cell_shape(cell) == "trapezoid":
             raise DomainError(
                 f"{cell!r} is a trapezoid; the lattice step is not defined at "
                 "the last addressable column of a row, where the row above "
@@ -1431,7 +1460,13 @@ def are_neighbor_cells(origin: str, destination: str) -> bool:
 
     Raises:
         ResolutionError: If the cells sit at different resolutions.
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(origin)
+    require_existing_cells(destination)
     if get_resolution(origin) != get_resolution(destination):
         raise ResolutionError(
             f"{origin!r} and {destination!r} sit at different resolutions; "
@@ -1469,6 +1504,10 @@ def cells_to_directed_edge(origin: str, destination: str) -> str | list[str]:
     Raises:
         DomainError: If the two indices hold different cell counts, or if
             any pair is not edge-adjacent.
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
     origins, destinations = _atoms(origin), _atoms(destination)
     if len(origins) != len(destinations):
@@ -1531,7 +1570,12 @@ def cell_to_edges(cell: str) -> list[str] | list[list[str]]:
     Raises:
         DomainError: If the cell is in the geometric exception set, where the
             edge set is not recoverable from the lexical step alone.
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(cell)
     per_cell = [
         [f"{atom}{EDGE_SEPARATOR}{neighbour}" for neighbour in _edge_neighbors(atom)]
         for atom in _atoms(cell)

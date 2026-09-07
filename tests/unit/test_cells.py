@@ -27,7 +27,12 @@ import pytest
 from itacart import boundary, cells
 from itacart.cells import FLOOR_EPSILON_M, _anchor_on_plane
 from itacart.constants import RES1_MAX_INDEX
-from itacart.exceptions import DomainError, InvalidIndexError, ResolutionError
+from itacart.exceptions import (
+    DomainError,
+    InvalidIndexError,
+    NonExistentCellError,
+    ResolutionError,
+)
 from itacart.geodesy import geodetic_to_sinusoidal
 from itacart.index import decompose, join_components, split_components
 from itacart.resolutions import cell_size, nominal_cell_area
@@ -237,14 +242,22 @@ def test_the_resolution_one_index_space_is_not_a_rectangle() -> None:
     range as ``0000/0000`` to ``2003/1000``, which is the bounding box of
     a sinusoidal region rather than the region itself.
 
-    The anchor is still *computable* -- the inverse shear and the inverse
-    projection are total functions -- which is what makes this quiet. It
-    is the longitude that leaves the planet.
+    The anchor is still *computable* -- the inverse shear and the
+    inverse projection are total functions -- and it is the longitude
+    that leaves the planet. What used to make this quiet was that the
+    public entry point answered anyway; it no longer does, so both halves
+    are asserted here. The interior computes, because nothing polices a
+    non-canonical coordinate on its way to an answer, and the surface
+    refuses, because the cell does not exist.
     """
-    corner_lon, _ = cells.cell_to_anchor(f"NE({RES1_MAX_INDEX})")
+    corner = f"NE({RES1_MAX_INDEX})"
+    corner_lon, _ = boundary.to_geodetic(*_anchor_on_plane(corner)[:2])
     assert abs(corner_lon) > 180.0
     with pytest.raises(DomainError, match="outside"):
         cells.geo_to_cell(corner_lon, 89.98, 1)
+
+    with pytest.raises(NonExistentCellError):
+        cells.cell_to_anchor(corner)
 
 
 def test_the_equator_restriction_is_a_declared_rule_not_a_pinned_bug() -> None:
@@ -462,8 +475,17 @@ def test_criterion_4_ascent_visits_each_level_exactly_once(
 
     cell = cells.geo_to_cell(13.0, 42.0, 13)
     monkeypatch.setattr(cells, "linear_refinement_ratio", counting)
-    cells.cell_to_anchor(cell)
+    _anchor_on_plane(cell)
     assert calls == list(range(2, 14))
+
+    # What the entry point costs on top, declared rather than folded into
+    # the count above. Resolving whether a deep cell exists walks the same
+    # ladder the ascent walks, so the public function pays for two passes
+    # where the ascent itself pays for one. Linear in the depth either
+    # way, which is the claim the cost test next door makes.
+    calls.clear()
+    cells.cell_to_anchor(cell)
+    assert calls == list(range(2, 14)) * 2
 
 
 def test_criterion_4_cost_grows_linearly_not_quadratically() -> None:

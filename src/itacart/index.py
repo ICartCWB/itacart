@@ -621,6 +621,15 @@ def decompose(index: str) -> list[str]:
     Example:
         ``"NE(0001/0002(1(A1,A2)))"`` yields
         ``["NE(0001/0002(1(A1)))", "NE(0001/0002(1(A2)))"]``.
+    The fold, and how far it reaches. A western zero-column spelling names
+    no cell -- column zero is the prime-meridian column and the meridian
+    belongs to the eastern quadrants -- and this layer takes it anyway,
+    because analysing a spelling is not the same act as answering for a
+    cell. Two functions rewrite it onto its eastern twin (``normalize``
+    and ``compose``) and two hand it straight back (``decompose`` and
+    ``iter_cells``). Anything that answers *about* the cell refuses it
+    instead, so the reach of this leniency is exactly the layer that reads
+    index strings.
     """
     return list(iter_cells(index))
 
@@ -648,6 +657,15 @@ def compose(cells: Iterable[str]) -> str:
     Raises:
         InvalidIndexError: If any entry is malformed, or the iterable is
             empty — no index denotes the empty region.
+    The fold, and how far it reaches. A western zero-column spelling names
+    no cell -- column zero is the prime-meridian column and the meridian
+    belongs to the eastern quadrants -- and this layer takes it anyway,
+    because analysing a spelling is not the same act as answering for a
+    cell. Two functions rewrite it onto its eastern twin (``normalize``
+    and ``compose``) and two hand it straight back (``decompose`` and
+    ``iter_cells``). Anything that answers *about* the cell refuses it
+    instead, so the reach of this leniency is exactly the layer that reads
+    index strings.
     """
     trees = [_parse_tree(cell) for cell in cells]
     if not trees:
@@ -683,6 +701,15 @@ def normalize(index: str) -> str:
 
     Returns:
         The canonical index string.
+    The fold, and how far it reaches. A western zero-column spelling names
+    no cell -- column zero is the prime-meridian column and the meridian
+    belongs to the eastern quadrants -- and this layer takes it anyway,
+    because analysing a spelling is not the same act as answering for a
+    cell. Two functions rewrite it onto its eastern twin (``normalize``
+    and ``compose``) and two hand it straight back (``decompose`` and
+    ``iter_cells``). Anything that answers *about* the cell refuses it
+    instead, so the reach of this leniency is exactly the layer that reads
+    index strings.
     """
     tree = _parse_tree(index)
     _pad_base_codes(tree)
@@ -716,6 +743,15 @@ def iter_cells(index: str) -> Iterator[str]:
 
     Yields:
         Fully qualified atomic index strings.
+    The fold, and how far it reaches. A western zero-column spelling names
+    no cell -- column zero is the prime-meridian column and the meridian
+    belongs to the eastern quadrants -- and this layer takes it anyway,
+    because analysing a spelling is not the same act as answering for a
+    cell. Two functions rewrite it onto its eastern twin (``normalize``
+    and ``compose``) and two hand it straight back (``decompose`` and
+    ``iter_cells``). Anything that answers *about* the cell refuses it
+    instead, so the reach of this leniency is exactly the layer that reads
+    index strings.
     """
     for path in _leaf_paths(_parse_tree(index)):
         yield join_components(path)

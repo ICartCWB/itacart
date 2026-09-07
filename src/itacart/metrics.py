@@ -32,6 +32,7 @@ from __future__ import annotations
 import math
 from typing import Literal, cast
 
+from ._existence import require_existing_cells
 from .cells import cell_to_anchor, cell_to_boundary, cell_to_centroid
 from .constants import WGS84_A, WGS84_E2
 from .exceptions import GeometryError
@@ -233,7 +234,12 @@ def compactness(cell: str) -> float | list[float]:
             limiting parallel, so the enclosed area is not the cell's.
             Step 2 of the paper's own workflow removes cells whose
             geometry is invalid for exactly this kind of reason.
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(cell)
     values = []
     for atom in iter_cells(cell):
         points = _projected_ring(atom)
@@ -303,7 +309,12 @@ def cell_base_angle(
 
     Raises:
         GeometryError: If ``output`` is not one of the three named forms.
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(cell)
     if output not in ("degrees", "radians", "sin"):
         raise GeometryError(
             f"output must be 'degrees', 'radians' or 'sin', not {output!r}"
@@ -391,7 +402,14 @@ def normalized_cell_area(cell: str) -> float | list[float]:
     Returns:
         The ratio for a single terminal cell, or a positionally aligned
         list when the index holds several.
+
+    Raises:
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(cell)
     values = []
     for atom in iter_cells(cell):
         area = cast(float, effective_cell_area(atom))

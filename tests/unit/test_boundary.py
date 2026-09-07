@@ -315,9 +315,11 @@ def test_criterion_3_the_column_limit_shrinks_with_the_cosine() -> None:
     assert lower > 0.0
     assert upper < 0.0
 
-    corner_lon, _ = cells.cell_to_anchor("NE(2003/1000)")
+    corner_lon, _ = boundary.to_geodetic(*cells._anchor_on_plane("NE(2003/1000)")[:2])
     assert abs(corner_lon) > ANTEMERIDIAN_LON
     assert boundary.is_valid_cell("NE(2003/1000)") is False
+    with pytest.raises(NonExistentCellError):
+        cells.cell_to_anchor("NE(2003/1000)")
 
 
 def test_criterion_3_a_malformed_index_is_answered_not_raised_on() -> None:
@@ -915,10 +917,23 @@ def test_criterion_9_the_measured_area_matches_the_reported_one(cell: str) -> No
 
 
 def test_criterion_9_a_cell_with_no_ground_under_it_is_refused() -> None:
-    """Geometry for a non-existent cell is an error, not an empty polygon."""
+    """Geometry for a non-existent cell is an error, not an empty polygon.
+
+    Refused twice over, and the two refusals are not redundant. The entry
+    point declines because the predicate denies the cell, which is the
+    contract; the interior declines because the domain clipped the ring
+    away to nothing, which is what the interior can still walk into. The
+    second is unreachable through the public surface now that the first
+    exists, and it is the one the topological search depends on, so it is
+    exercised on the route that still reaches it rather than deleted for
+    looking dead from outside.
+    """
     assert boundary.is_valid_cell("NE(2003/1000)") is False
-    with pytest.raises(NonExistentCellError, match="no area inside"):
+    with pytest.raises(NonExistentCellError, match="names no cell"):
         cells.cell_to_polygon("NE(2003/1000)")
+
+    with pytest.raises(NonExistentCellError, match="no area inside"):
+        cells._cell_to_boundary("NE(2003/1000)")
 
 
 # --------------------------------------------------------------------------

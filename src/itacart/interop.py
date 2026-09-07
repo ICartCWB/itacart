@@ -29,6 +29,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any, cast
 
+from shapely.errors import ShapelyError
 from shapely.geometry import MultiPolygon, Polygon, box, mapping, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.geometry.polygon import orient
@@ -37,7 +38,11 @@ from shapely.ops import unary_union
 from .boundary import cell_shape, extension_zone, is_valid_cell
 from .cells import cell_to_boundary
 from .constants import WGS84_A, WGS84_E2
-from .exceptions import GeometryError, NonExistentCellError
+from .exceptions import (
+    GeometryError,
+    NonExistentCellError,
+    UnsupportedGeometryTypeError,
+)
 from .geometry import Containment, polyfill
 from .index import decompose
 from .resolutions import effective_cell_area, get_resolution, nominal_cell_area
@@ -429,14 +434,27 @@ def from_geojson(
         geometries = [obj["geometry"]]
     else:
         geometries = [obj]
-    return [
-        polyfill(
-            shape(geometry),
-            resolution,
-            containment=cast("Containment", containment),
+    filled = []
+    for geometry in geometries:
+        try:
+            drawn = shape(geometry)
+        except ShapelyError as exc:
+            # Shapely's own error for a type it does not know. Letting it
+            # through means one ``except ITACaRTError`` no longer guards the
+            # pipeline, and this route is why nobody noticed: the totality
+            # sweep classifies consumers by their first parameter's name,
+            # this one is called ``obj``, and the sweep never reached it.
+            raise UnsupportedGeometryTypeError(
+                f"geometry is not a GeoJSON type this package reads: {exc}"
+            ) from exc
+        filled.append(
+            polyfill(
+                drawn,
+                resolution,
+                containment=cast("Containment", containment),
+            )
         )
-        for geometry in geometries
-    ]
+    return filled
 
 
 def to_geodataframe(index: str, crs: str = "EPSG:4326") -> "geopandas.GeoDataFrame":

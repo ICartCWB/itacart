@@ -211,7 +211,16 @@ def test_the_census_reaches_the_whole_surface() -> None:
     assert "stub" not in tally
     assert tally["type"] == 19
     assert tally["no-arguments"] == 4
-    assert tally["consumer"] >= 50
+    # Equality, not a floor. A floor lets the pin rot in both directions:
+    # a consumer that quietly leaves the census still clears it, and so
+    # does one that arrives without anyone deciding it belongs. This phase
+    # moved the consumer set, which is the moment to stop deferring the
+    # conversion. Fifty-nine is the count of public names; the sweep below
+    # runs over sixty, because the facade method the census reaches is not
+    # itself a name in ``__all__``. Both are pinned, so a consumer leaving
+    # either set fails here.
+    assert tally["consumer"] == 59
+    assert len(_consumers()) == 60
     assert tally["producer"] == len(PRODUCER_NAMES)
 
 

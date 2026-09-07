@@ -60,10 +60,12 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, cast
 
+from ._existence import require_existing_cells
 from .constants import (
     ANTEMERIDIAN_LON,
     EXTENSION_ZONES,
     MERIDIAN_QUADRANT,
+    QUADRANTS,
     RES1_MAX_INDEX,
     RES1_SEPARATOR,
     CellShape,
@@ -597,7 +599,15 @@ def last_lattice_column(quadrant: str, row: int, side: float) -> int:
     Returns:
         The greatest existing column index, which is ``-1`` when the row
         holds no cell at all.
+
+    Raises:
+        ValueError: If the quadrant is not one of the four. A quadrant is
+            an enumerated adjustment parameter and not an index, so the
+            refusal is the built-in rather than this package's hierarchy,
+            which answers for what is wrong with an index or a domain.
     """
+    if quadrant not in QUADRANTS:
+        raise ValueError(f"quadrant must be one of {QUADRANTS}: {quadrant!r}")
     lower_y = row * side
     res1_row = int(math.floor((lower_y + _CLIP_EPSILON_M) / _L1))
     lower = _x_border(quadrant, res1_row, lower_y) / side
@@ -726,6 +736,23 @@ def absorbs_border(cell: str) -> bool | list[bool]:
 
     Returns:
         A boolean for a single cell, or a positionally aligned list.
+
+    Raises:
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
+    """
+    require_existing_cells(cell)
+    return _absorbs_border(cell)
+
+
+def _absorbs_border(cell: str) -> bool | list[bool]:
+    """Interior twin of :func:`absorbs_border`, without the existence guard.
+
+    A topological computation reaches this one. It walks candidate
+    lattice coordinates that may name no cell, and refusing there
+    would refuse the search rather than the answer.
     """
     values: list[object] = []
     for atom in iter_cells(cell):
@@ -796,6 +823,23 @@ def cell_shape(cell: str) -> CellShape | list[CellShape]:
     Returns:
         One of ``"parallelogram"``, ``"triangle"`` or ``"trapezoid"`` for
         a single cell, or a positionally aligned list.
+
+    Raises:
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
+    """
+    require_existing_cells(cell)
+    return _cell_shape(cell)
+
+
+def _cell_shape(cell: str) -> CellShape | list[CellShape]:
+    """Interior twin of :func:`cell_shape`, without the existence guard.
+
+    A topological computation reaches this one. It walks candidate
+    lattice coordinates that may name no cell, and refusing there
+    would refuse the search rather than the answer.
     """
     values = [_safe_ring(atom)[0] for atom in iter_cells(cell)]
     return cast("CellShape | list[CellShape]", _per_cell(cell, list(values)))
@@ -809,7 +853,14 @@ def is_triangular_cell(cell: str) -> bool | list[bool]:
 
     Returns:
         A boolean for a single cell, or a positionally aligned list.
+
+    Raises:
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(cell)
     values = [_safe_ring(atom)[0] == "triangle" for atom in iter_cells(cell)]
     return cast("bool | list[bool]", _per_cell(cell, list(values)))
 
@@ -825,7 +876,14 @@ def is_trapezoidal_cell(cell: str) -> bool | list[bool]:
 
     Returns:
         A boolean for a single cell, or a positionally aligned list.
+
+    Raises:
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(cell)
     values = [_safe_ring(atom)[0] == "trapezoid" for atom in iter_cells(cell)]
     return cast("bool | list[bool]", _per_cell(cell, list(values)))
 
@@ -854,7 +912,14 @@ def is_equal_area_cell(cell: str) -> bool | list[bool]:
 
     Returns:
         A boolean for a single cell, or a positionally aligned list.
+
+    Raises:
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(cell)
     values = [not absorbs_border(atom) for atom in iter_cells(cell)]
     return cast("bool | list[bool]", _per_cell(cell, list(values)))
 
@@ -931,7 +996,14 @@ def is_boundary_cell(cell: str) -> bool | list[bool]:
 
     Returns:
         A boolean for a single cell, or a positionally aligned list.
+
+    Raises:
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(cell)
     values: list[object] = []
     for atom in iter_cells(cell):
         shape, ring = _safe_ring(atom)
@@ -956,7 +1028,14 @@ def is_extension_cell(cell: str) -> bool | list[bool]:
 
     Returns:
         A boolean for a single cell, or a positionally aligned list.
+
+    Raises:
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(cell)
     values: list[object] = []
     for atom in iter_cells(cell):
         values.append(_reaches_past_antemeridian(_safe_ring(atom)[1]))
@@ -981,7 +1060,14 @@ def extension_zone(cell: str) -> ExtensionZone | None | list[ExtensionZone | Non
     Returns:
         ``"FIJI"``, ``"CHUKOTKA"`` or ``None`` for a single cell, or a
         positionally aligned list.
+
+    Raises:
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(cell)
     values: list[object] = []
     for atom in iter_cells(cell):
         components = split_components(atom)

@@ -1290,19 +1290,26 @@ def test_the_index_route_stays_lexical_and_the_exception_set_does_not() -> None:
     lexical = ("NE(0500/0300)", "NE(0001/0300)", "NE(0500/0300(1(A1)))")
     measured = ("NE(0000/0300)", "NE(1784/0300)", "NE(0000/1000)", "NW(0883/0708)")
 
-    saved = itacart.cells.cell_to_boundary
+    # The door is the name the interior actually walks through, and it is
+    # the private twin: the public entry point carries the existence guard
+    # and the interior deliberately does not go through it. Arming the
+    # public name would arm something this path never opens, which is the
+    # failure the armed-door rule exists to catch -- a guarantee that
+    # shrinks in silence while the test stays green. The measured family
+    # below is what proves the door is a door.
+    saved = itacart.cells._cell_to_boundary
     try:
         topology._contacts.cache_clear()
-        itacart.cells.cell_to_boundary = refuse  # type: ignore[assignment]
-        topology.cell_to_boundary = refuse  # type: ignore[assignment]
+        itacart.cells._cell_to_boundary = refuse  # type: ignore[assignment]
+        topology._cell_to_boundary = refuse  # type: ignore[assignment]
         for cell in lexical:
             assert isinstance(topology.get_neighbor(cell, "E"), str)
         for cell in measured:
             with pytest.raises(AssertionError, match="consulted geometry"):
                 topology.get_neighbor(cell, "E")
     finally:
-        itacart.cells.cell_to_boundary = saved  # type: ignore[assignment]
-        topology.cell_to_boundary = saved  # type: ignore[assignment]
+        itacart.cells._cell_to_boundary = saved  # type: ignore[assignment]
+        topology._cell_to_boundary = saved  # type: ignore[assignment]
         topology._contacts.cache_clear()
 
 

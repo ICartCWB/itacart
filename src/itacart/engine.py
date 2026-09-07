@@ -637,6 +637,10 @@ class ITACaRT:
                 ``are_neighbor_cells`` and ``grid_distance`` refuse the
                 identical argument shape with this exception and a caller
                 should not have to know which of the three it called.
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
         """
         centroid = cell_to_centroid(cell)
         if not isinstance(centroid, tuple):
@@ -653,6 +657,10 @@ class ITACaRT:
         Raises:
             NonAtomicIndexError: If the index names more than one cell, for
                 the reason given on :meth:`cell_to_centroid`.
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
         """
         ring = cell_to_boundary(cell)
         if isinstance(ring[0], list):

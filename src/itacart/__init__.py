@@ -30,6 +30,7 @@ __paper_doi__ = "10.14393/rbcv77n0a-79281"
 
 # -- Constants --------------------------------------------------------------
 
+from ._existence import require_existing_cells
 from .boundary import (
     absorbs_border,
     cell_shape,
@@ -265,7 +266,12 @@ def cell_to_latlng(cell: str) -> tuple[float, float]:
 
     Raises:
         InvalidIndexError: If ``cell`` names more than one cell.
+        NonExistentCellError: If any cell of the index names no cell.
+            The predicate is the arbiter and the contract ends there:
+            a spelling it denies is refused rather than answered for
+            the cell it would otherwise fold onto.
     """
+    require_existing_cells(cell)
     if not is_atomic(cell):
         raise InvalidIndexError(
             f"{cell!r} names {count_cells(cell)} cells; cell_to_latlng "
