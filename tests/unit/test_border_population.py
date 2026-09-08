@@ -35,6 +35,18 @@ QUADRANTS = ("NE", "NW", "SE", "SW")
 #: Resolution 1 refines four-to-one. Any other count is the border.
 CANONICAL_RATIO = 4
 
+#: The three stable terms of the band's accounting.
+#:
+#: The first is the sum of the derived widths over every row where the
+#: row above is shorter, which is integer arithmetic over the lattice and
+#: moves on no machine. The second is the corner-contact surplus, one
+#: column on each row whose neighbour above is the same length. The third
+#: is the four rows where an extension zone opens, where the derivation
+#: does not apply and the bands are one, two, two and two.
+_DERIVED_TOTAL = 12132
+_CORNER_SURPLUS = 368
+_RISING_BANDS = 7
+
 #: Column zero is the meridian column and the meridian belongs to the
 #: east, so the western quadrants start at one. Counting from zero in all
 #: four is how a previous enumeration reported one cell too many per
@@ -96,6 +108,25 @@ def _refused_band(quadrant: str, row: int) -> tuple[tuple[int, str], ...]:
             break
         refused.append((column, verdict))
     return tuple(refused)
+
+
+def _shortfall() -> int:
+    """Rows whose band came out one column short of the derivation.
+
+    Counted rather than pinned. The shortfall is a measurement of the
+    geometry library's predicate on a contact of vanishing measure, not
+    of the grid, and it has been seen at 248 and at 244 on two machines
+    that agree on everything else in this module.
+    """
+    short = 0
+    for quadrant, row, band in _band_profile():
+        last = itacart.last_lattice_column(quadrant, row, SIDE)
+        above = itacart.last_lattice_column(quadrant, row + 1, SIDE)
+        if above > last:
+            continue
+        if len(band) < last - above + 1:
+            short += 1
+    return short
 
 
 @functools.lru_cache(maxsize=None)
@@ -342,13 +373,27 @@ def test_the_refused_band_profile_over_every_row_of_every_quadrant() -> None:
         widths[quadrant][row] = len(band)
         verdicts.update(name for _, name in band)
 
-    assert sum(sum(w.values()) for w in widths.values()) == 12259
-    assert dict(verdicts) == {
-        "NonExistentCellError": 12243,
-        "DomainError": 13,
-        "AntemeridianError": 2,
-        "GeometryError": 1,
+    # The refusals that come from a structure rather than from a contact
+    # are pinned by equality: three polar families and one topology
+    # failure, none of them decided by a predicate on a marginal overlap.
+    assert verdicts["DomainError"] == 13
+    assert verdicts["AntemeridianError"] == 2
+    assert verdicts["GeometryError"] == 1
+    assert set(verdicts) == {
+        "NonExistentCellError",
+        "DomainError",
+        "AntemeridianError",
+        "GeometryError",
     }
+
+    # The total is not pinned as a literal, because part of it is a
+    # measurement of the geometry engine rather than of the grid. It is
+    # asserted as the accounting that produces it, whose three stable
+    # terms are pinned in the derivation test below. Measured: 12 259 on
+    # Linux with shapely 2.1.2, 12 263 on Windows with the shapely the
+    # author has installed, differing only in the last term.
+    total = sum(sum(w.values()) for w in widths.values())
+    assert total == _DERIVED_TOTAL + _CORNER_SURPLUS + _RISING_BANDS - _shortfall()
 
     # Away from the four extension-zone rows the band is narrow, and it
     # is a share of the row rather than a constant: four columns is a
@@ -404,8 +449,11 @@ def test_the_band_width_is_the_rate_at_which_the_row_above_shortens() -> None:
     the strip at a corner, one column under where the strip's outer bound
     does not quite reach.
     """
-    residues: collections.Counter[int] = collections.Counter()
+    level: collections.Counter[int] = collections.Counter()
+    shortening: collections.Counter[int] = collections.Counter()
     rising: list[tuple[str, int]] = []
+    derived_total = 0
+    rising_bands = 0
     for quadrant, row, band in _band_profile():
         last = itacart.last_lattice_column(quadrant, row, SIDE)
         above = itacart.last_lattice_column(quadrant, row + 1, SIDE)
@@ -413,12 +461,34 @@ def test_the_band_width_is_the_rate_at_which_the_row_above_shortens() -> None:
             # The row above is longer, which happens only where an
             # extension zone opens. The derivation assumes it is shorter.
             rising.append((quadrant, row))
+            rising_bands += len(band)
             continue
-        residues[len(band) - (last - above + 1)] += 1
+        derived = last - above + 1
+        derived_total += derived
+        (level if derived == 1 else shortening)[len(band) - derived] += 1
 
     assert sorted(rising) == [("NE", 708), ("NW", 799), ("SE", 170), ("SW", 237)]
-    assert dict(residues) == {0: 3382, 1: 368, -1: 248}
-    assert sum(residues.values()) == 3998
+    assert rising_bands == _RISING_BANDS
+    assert derived_total == _DERIVED_TOTAL
+    assert sum(level.values()) + sum(shortening.values()) == 3998
+
+    # Where the row above is the same length, the derivation gives one
+    # column and the band is one or two. The second is the neighbouring
+    # cell touching the strip at a corner, an intersection that is a
+    # point with no area, and the split is the same on every machine it
+    # has been measured on.
+    assert dict(level) == {1: _CORNER_SURPLUS, 0: 41}
+
+    # Where the row above is shorter, the band is the derivation or one
+    # column less, never more and never two less. Which rows come out one
+    # short is decided by the geometry engine's predicate on a contact of
+    # vanishing measure, so it is named as an environment measurement
+    # rather than pinned: 248 rows on Linux with shapely 2.1.2, 244 on
+    # Windows with the shapely the author has installed. A conditional
+    # pin would make the suite assert different things depending on what
+    # the installer chose, which is the thing this project does not do.
+    assert set(shortening) <= {0, -1}
+    assert sum(shortening.values()) == 3589
 
 
 @pytest.mark.slow
