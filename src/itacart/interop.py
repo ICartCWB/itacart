@@ -427,6 +427,13 @@ def from_geojson(
 
     Returns:
         One compositional index per input geometry, in file order.
+
+    Raises:
+        UnsupportedGeometryTypeError: If a geometry is of a type the
+            reader cannot draw. The geometry library raises its own error
+            for that, which is outside this package's hierarchy, so one
+            ``except ITACaRTError`` around a pipeline would not have
+            caught it.
     """
     if obj.get("type") == "FeatureCollection":
         geometries = [feature["geometry"] for feature in obj.get("features", [])]

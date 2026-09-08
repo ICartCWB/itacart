@@ -9,11 +9,19 @@ returned that denied spelling to the caller inside a cell list.
 The contract this module enforces has two halves and one deliberate hole.
 
 Entering, a callable that answers *about a cell* -- its geometry, its shape,
-its position, its area, its neighbourhood, its ancestry, its serialized form
--- requires the cell to exist, and refuses with :class:`NonExistentCellError`
-when it does not. In a cadastral system, returning the area of a cell that is
-not the one asked for is a grave error, which is the reasoning of ``D-0.5``
-applied to existence rather than to clipping.
+its position, its area, its neighbourhood, its descendants, its serialized
+form -- requires the cell to exist, and refuses with
+:class:`NonExistentCellError` when it does not. In a cadastral system,
+returning the area of a cell that is not the one asked for is a grave error,
+and it is the same reasoning that makes a clipped cell report the ground it
+actually covers rather than its nominal area: the answer belongs to the cell
+that was named, or there is no answer.
+
+Ancestry is not in that list, and its absence is the point rather than an
+oversight. Producing a parent is total over the grammar and its prefix may
+legitimately name no cell, so the whole ancestry family stays lexical.
+Descent does not: counting children consults the border, so it needs the
+cell.
 
 Leaving, no such callable may emit a spelling the predicate denies. That half
 needs no runtime check and has none: measured over a corpus of valid cells

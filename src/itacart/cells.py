@@ -719,6 +719,13 @@ def _cell_to_boundary(
     A topological computation reaches this one. It walks candidate
     lattice coordinates that may name no cell, and refusing there
     would refuse the search rather than the answer.
+
+    Raises:
+        NonExistentCellError: If the domain clipped the ring away to
+            nothing. Skipping the guard is not the same as answering for
+            anything: a caller inside still gets an error rather than an
+            empty polygon, and this is the only route that still reaches
+            that refusal.
     """
     from .boundary import plane_ring, to_geodetic
 
