@@ -31,7 +31,12 @@ import pytest
 from _pytest.outcomes import Failed
 
 import itacart
-from itacart.exceptions import ITACaRTError, NonExistentCellError
+from itacart.exceptions import (
+    ITACaRTError,
+    MinResolutionError,
+    NonExistentCellError,
+    ResolutionError,
+)
 
 EMPTY = inspect.Parameter.empty
 
@@ -65,18 +70,26 @@ EXTRA_ARGUMENTS: dict[str, tuple[Any, ...]] = {
 #: Analysing a spelling is not the same act as answering for a cell, so
 #: these keep accepting one the predicate denies. This is the older
 #: decision this contract does not reopen, and its reach is measured
-#: rather than described: see the two tests below.
+#: rather than described: every member is called with every denied
+#: spelling of the corpus below, not four of them with one.
+#:
+#: Three names were listed here and did not belong. Descent is not the
+#: string layer -- the guard module says so in as many words -- and
+#: ``child_position``, ``get_descendants`` and ``uncompact_cells`` all
+#: answer about a cell. They sat here because the whole hierarchy family
+#: was excused at once, on the strength of ancestry being lexical, and
+#: nothing ever called them to check. Two of them refused already; the
+#: third handed a denied spelling straight back whenever the index was
+#: already at the requested resolution.
 LEXICAL_EXEMPTION = (
     "base_cell_of",
     "cell_to_parent",
-    "child_position",
     "common_ancestor",
     "compact_cells",
     "compose",
     "count_cells",
     "decompose",
     "get_ancestors",
-    "get_descendants",
     "get_parent",
     "get_resolution",
     "is_ancestor",
@@ -88,7 +101,6 @@ LEXICAL_EXEMPTION = (
     "parse",
     "quadrant_of",
     "split_components",
-    "uncompact_cells",
 )
 
 
@@ -224,9 +236,9 @@ def test_the_census_puts_every_public_name_in_exactly_one_bucket() -> None:
         "no-arguments": 4,
         "other-signature": 44,
         "fourth-form": 7,
-        "lexical": 22,
+        "lexical": 19,
         "refuses-as-syntax": 3,
-        "requires-existence": 35,
+        "requires-existence": 38,
     }
 
 
@@ -508,6 +520,24 @@ def test_no_cell_is_its_own_neighbour() -> None:
 # --------------------------------------------------------------------------
 
 
+def test_the_lexical_exemption_is_earned_by_every_member() -> None:
+    """Each exempt name is called with each denied spelling, and accepts.
+
+    The exemption used to be measured for four of its members and
+    asserted for the rest, and the difference was not academic: three of
+    the unmeasured ones refused, and one of those three was handing a
+    denied spelling back to the caller. An exemption is a claim about a
+    name, so it costs one call per name to stop being a guess.
+
+    The control this predicate needs is the three that left: they are
+    now in the refusing family, where a parametrized test calls them
+    over this same corpus and requires them to raise.
+    """
+    for name in LEXICAL_EXEMPTION:
+        for cell in DENIED:
+            _call(name, cell)
+
+
 def test_the_lexical_exemption_is_earned_and_its_reach_is_measured() -> None:
     """What the exempt layer does with a denied spelling, by measurement.
 
@@ -531,6 +561,52 @@ def test_the_lexical_exemption_is_earned_and_its_reach_is_measured() -> None:
     for name in LEXICAL_EXEMPTION:
         assert name in itacart.__all__
         assert classify(name) == "lexical"
+
+
+def test_uncompacting_to_a_cells_own_resolution_still_asks_whether_it_exists() -> None:
+    """The branch through which a denied spelling used to leave.
+
+    ``uncompact_cells`` plans each cell as "descend" or "already there",
+    and the second branch yielded the cell untouched. Every denied
+    spelling the census could reach was a resolution-1 one, and the
+    census called with a target of 2, so every call took the descending
+    branch and the hole never showed. It takes a denied spelling already
+    at the target to open it.
+    """
+    deep = f"{DENIED_WEST[:-1]}(1))"
+    assert itacart.is_valid_index(deep) is True
+    assert itacart.is_valid_cell(deep) is False
+
+    with pytest.raises(NonExistentCellError):
+        list(itacart.uncompact_cells(deep, 2))
+
+    # And the branch itself survives: a cell that exists and is already
+    # at the target still comes back, unexpanded.
+    assert list(itacart.uncompact_cells("NE(0001/0000(1))", 2)) == ["NE(0001/0000(1))"]
+
+
+def test_child_position_answers_about_existence_before_about_resolution() -> None:
+    """Refusing for the wrong reason reads as refusing.
+
+    A denied resolution-1 spelling drew ``ResolutionError`` here, which
+    is a true statement about a resolution-1 cell and not an answer to
+    the question the contract asks. It also hid the name from the census,
+    whose corpus is resolution 1: the call raised, so nothing looked
+    amiss, and the exemption kept a name that never earned it.
+
+    Both complaints below are controls. They fire on spellings the
+    predicate *accepts*, so they show the guard took nothing with it.
+    """
+    with pytest.raises(NonExistentCellError):
+        itacart.child_position(DENIED_WEST)
+
+    assert itacart.is_valid_cell("NE(0001/0000)") is True
+    with pytest.raises(ResolutionError):
+        itacart.child_position("NE(0001/0000)")
+
+    assert itacart.is_valid_cell("NE") is True
+    with pytest.raises(MinResolutionError):
+        itacart.child_position("NE")
 
 
 def test_ancestry_is_lexical_and_stays_that_way() -> None:

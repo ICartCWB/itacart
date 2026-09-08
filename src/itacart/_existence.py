@@ -23,6 +23,15 @@ legitimately name no cell, so the whole ancestry family stays lexical.
 Descent does not: counting children consults the border, so it needs the
 cell.
 
+That line was drawn here before it was drawn in the code. Three descent
+names in the hierarchy module -- a sibling ordinal, a stream of
+descendants, an expansion to uniform resolution -- were excused along
+with ancestry, because the family was judged as a family and nothing
+called its members to check. Two of them turned out to refuse anyway.
+The third did not: an index already at the requested resolution is
+yielded back untouched, so a denied spelling entered and left through
+the same name without the border ever being consulted.
+
 Leaving, no such callable may emit a spelling the predicate denies. That half
 needs no runtime check and has none: measured over a corpus of valid cells
 spanning four quadrants, nothing in the surface emits a denied spelling, and

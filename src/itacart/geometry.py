@@ -245,7 +245,24 @@ def _lift_extensions(geometry: "BaseGeometry") -> "BaseGeometry":
         return geometry
     if not remainder.is_empty:
         lifted.append(remainder)
-    return unary_union(lifted)
+    united = unary_union(lifted)
+    if areal and united.geom_type == "GeometryCollection":
+        # Cutting a densified boundary along the zone's own edge leaves
+        # debris behind when the boundary lies *on* that edge: the union
+        # comes back as the figure plus a train of zero-area linestrings,
+        # one per densified vertex that fell on the cut. The rule is the
+        # one already applied to the intersection above, in the other
+        # direction: an areal geometry stays areal, and a part with no
+        # area is not part of the figure. It is a rule about type rather
+        # than about size, so no threshold has to be chosen and none can
+        # go stale.
+        areal_parts = [
+            part
+            for part in united.geoms
+            if part.geom_type in {"Polygon", "MultiPolygon"}
+        ]
+        united = unary_union(areal_parts)
+    return united
 
 
 def _check_resolution(resolution: int) -> None:
@@ -367,7 +384,25 @@ def _quadrant_pieces(plane: "BaseGeometry") -> list[tuple[str, "BaseGeometry"]]:
         "SW": (meridian, equator),
     }
     for quadrant, window in windows.items():
-        piece = plane.intersection(window)
+        try:
+            piece = plane.intersection(window)
+        except Exception as exc:
+            # The geometry library refuses a self-intersecting plane
+            # geometry, and its exception is not one this package owns.
+            # It reaches here from a boundary whose densification walked
+            # over the pole: the ring stops short of the pole and the
+            # densified edge between two longitudes half a turn apart
+            # does not, because the geodesic joining them runs through
+            # it. Three of the four polar-row cells survive that walk
+            # without self-touching and are refused later, on their own
+            # terms; the fourth does not, and this is where it used to
+            # leave through a public name wearing a foreign exception.
+            raise GeometryError(
+                "the boundary cannot be split by quadrant because it is "
+                "self-intersecting once densified, which happens when an "
+                "edge spans half a turn of longitude and its geodesic "
+                "passes through the pole"
+            ) from exc
         if piece.is_empty:
             continue
         if piece.geom_type in _NON_AREAL:

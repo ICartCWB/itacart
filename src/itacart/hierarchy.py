@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from typing import Iterable, Iterator, Sequence, cast
 
+from ._existence import require_existing_cells
 from .constants import (
     MAX_RESOLUTION,
     MIN_RESOLUTION,
@@ -437,8 +438,15 @@ def get_descendants(index: str, target_res: int) -> Iterator[str]:
 
     Raises:
         MaxResolutionError: If ``target_res`` exceeds resolution 13.
+        NonExistentCellError: If any addressed cell names no cell.
         ResolutionError: If ``target_res`` is not finer than any input cell.
     """
+    # Descent answers about a cell, so it is on the entering side of the
+    # existence contract. The check is here rather than left to the
+    # descent itself because the refusal has to happen at the boundary:
+    # a spelling whose resolution already equals the target never reaches
+    # the machinery that would have consulted the border.
+    require_existing_cells(index)
     return cast("Iterator[str]", get_children(index, target_res, flatten=True))
 
 
@@ -487,10 +495,18 @@ def child_position(cell: str) -> int | list[int]:
 
     Raises:
         MinResolutionError: If any addressed cell is a whole quadrant.
+        NonExistentCellError: If any addressed cell names no cell, or has
+            no parent cell.
         ResolutionError: If any addressed cell is a resolution-1 cell.
-        NonExistentCellError: If any addressed cell has no parent cell.
     """
     from . import boundary
+
+    # A sibling ordinal is an answer about a cell. Without this the
+    # resolution complaint arrived first for a denied resolution-1
+    # spelling, which reads as a refusal but answers a different
+    # question: the quadrant case below still raises its own error,
+    # because a quadrant is a cell the predicate accepts.
+    require_existing_cells(cell)
 
     positions: list[int] = []
     for atom in decompose(cell):
@@ -661,12 +677,18 @@ def uncompact_cells(index: str, target_res: int) -> Iterator[str]:
 
     Raises:
         MaxResolutionError: If ``target_res`` exceeds resolution 13.
+        NonExistentCellError: If any cell of the index names no cell.
         ResolutionError: If any terminal cell is finer than ``target_res``.
     """
     if target_res > MAX_RESOLUTION:
         raise MaxResolutionError(
             f"resolution {target_res} is finer than the maximum {MAX_RESOLUTION}"
         )
+    # A cell already at the target resolution is yielded straight back by
+    # the expansion below, which is how a denied spelling used to leave
+    # through this name without anything having asked whether it named a
+    # cell. Refusing where the index enters covers both branches.
+    require_existing_cells(index)
     plans: list[tuple[str, bool]] = []
     for cell in decompose(index):
         current = _resolution_of(split_components(cell))
