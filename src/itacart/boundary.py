@@ -929,6 +929,58 @@ def is_equal_area_cell(cell: str) -> bool | list[bool]:
 # --------------------------------------------------------------------------
 
 
+def _crosses(
+    first: tuple[float, float],
+    second: tuple[float, float],
+    third: tuple[float, float],
+    fourth: tuple[float, float],
+) -> bool:
+    """Whether the open segments ``first-second`` and ``third-fourth`` cross."""
+
+    def side(
+        origin: tuple[float, float],
+        towards: tuple[float, float],
+        point: tuple[float, float],
+    ) -> float:
+        return (towards[0] - origin[0]) * (point[1] - origin[1]) - (
+            towards[1] - origin[1]
+        ) * (point[0] - origin[0])
+
+    left = side(third, fourth, first)
+    right = side(third, fourth, second)
+    near = side(first, second, third)
+    far = side(first, second, fourth)
+    return ((left > 0.0) != (right > 0.0)) and ((near > 0.0) != (far > 0.0))
+
+
+def _is_simple_ring(ring: list[tuple[float, float]]) -> bool:
+    """Whether a ring closes without crossing itself.
+
+    Strict crossings only. Adjacent edges share an endpoint and a
+    degenerate collinear pair touches without enclosing anything, and
+    neither is a fold.
+
+    A cell ring carries three to five vertices, so the pairwise sweep is
+    cheaper than building a polygon and asking a geometry engine, and it
+    keeps the existence predicate free of that dependency.
+    """
+    count = len(ring)
+    if count < 3:
+        return False
+    for index in range(count):
+        for other in range(index + 2, count):
+            if index == 0 and other == count - 1:
+                continue
+            if _crosses(
+                ring[index],
+                ring[(index + 1) % count],
+                ring[other],
+                ring[(other + 1) % count],
+            ):
+                return False
+    return True
+
+
 def is_valid_cell(cell: str) -> bool | list[bool]:
     """Whether a cell exists in the ITACaRT domain.
 
@@ -955,6 +1007,15 @@ def is_valid_cell(cell: str) -> bool | list[bool]:
     ``RES1_MAX_INDEX`` transcribes Table 1 faithfully but names the
     corner of a bounding box, not the last cell of any row.
 
+    A ring must also close without crossing itself. Absorbing a border
+    steeper than the lattice shear can fold the quadrilateral it builds,
+    and the shoelace area of a folded ring is the difference of its two
+    lobes rather than nothing, so an area test alone accepts it. Measured:
+    ``NE(0000/1000(3(A1)))`` reports 104 724.4 square metres from a ring
+    that covers 322 621.8 once repaired, and it was accepted here. It is
+    refused instead, and not repaired: a fold is an artefact of absorption
+    and the cell it would name has no boundary anyone drew.
+
     A syntactically malformed index is answered ``False`` rather than
     raised on, so the predicate composes.
 
@@ -980,7 +1041,8 @@ def is_valid_cell(cell: str) -> bool | list[bool]:
         if column > _RES1_MAX_COLUMN and len(components) < 3:
             values.append(False)
             continue
-        values.append(ring_area(_safe_ring(atom)[1]) > _AREA_EPSILON_M2)
+        ring = _safe_ring(atom)[1]
+        values.append(ring_area(ring) > _AREA_EPSILON_M2 and _is_simple_ring(ring))
     return cast("bool | list[bool]", _per_cell(cell, values))
 
 

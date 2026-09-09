@@ -389,19 +389,21 @@ def _quadrant_pieces(plane: "BaseGeometry") -> list[tuple[str, "BaseGeometry"]]:
         except Exception as exc:
             # The geometry library refuses a self-intersecting plane
             # geometry, and its exception is not one this package owns.
-            # It reaches here from a boundary whose densification walked
-            # over the pole: the ring stops short of the pole and the
-            # densified edge between two longitudes half a turn apart
-            # does not, because the geodesic joining them runs through
-            # it. Three of the four polar-row cells survive that walk
-            # without self-touching and are refused later, on their own
-            # terms; the fourth does not, and this is where it used to
-            # leave through a public name wearing a foreign exception.
+            #
+            # It used to arrive from inside: a polar-row cell whose own
+            # densified boundary folded across the globe, because the
+            # walk over the pole put the far half on the opposite
+            # longitude branch from the vertex it was walking towards.
+            # That is repaired in :func:`densify_segment`, and no cell of
+            # the grid reaches here any more.
+            #
+            # What does reach here is a caller's outline that crosses
+            # itself. Such a figure has no inside for a clip to keep, and
+            # the package owes it a name rather than the engine's.
             raise GeometryError(
                 "the boundary cannot be split by quadrant because it is "
-                "self-intersecting once densified, which happens when an "
-                "edge spans half a turn of longitude and its geodesic "
-                "passes through the pole"
+                "self-intersecting; an outline that crosses itself has no "
+                "interior for the split to keep"
             ) from exc
         if piece.is_empty:
             continue
@@ -1686,6 +1688,21 @@ def densify_segment(
     happens at all. That is what makes the operation idempotent: a second
     pass measures each leg, finds it under the threshold, and leaves it.
 
+    **Each interior point is put on the branch of the endpoint nearer to
+    it in arc length**, the start for the first half and the destination
+    for the second. On an ordinary segment the two references sit less
+    than half a turn apart and agree, so the rule changes nothing. On a
+    segment spanning exactly half a turn of longitude they do not agree,
+    because such a segment is meridional: its geodesic passes through a
+    pole and its longitude jumps a hundred and eighty degrees there.
+    Referring the far half to the start would let it land on the opposite
+    branch from the vertex it is walking towards, which folds the ring
+    across the globe and leaves the projection with a self-intersection
+    the caller cannot read. The midpoint itself, which is the pole when
+    the segment is symmetric about it, is referred to the start; its
+    longitude is immaterial because the parallels plane collapses every
+    meridian at the pole onto one point.
+
     Provenance: ``itacart_core/geometry_blob.py`` (``densify_segment``).
 
     Args:
@@ -1719,7 +1736,8 @@ def densify_segment(
     out = [(lon1, lat1)]
     for index in range(1, pieces):
         longitude, latitude = direct_geodesic(lon1, lat1, azimuth, step * index)
-        out.append((_on_the_branch_of(lon1, longitude), latitude))
+        reference = lon1 if index * 2 <= pieces else lon2
+        out.append((_on_the_branch_of(reference, longitude), latitude))
     out.append((lon2, lat2))
     return out
 
@@ -1740,7 +1758,18 @@ def _on_the_branch_of(reference: float, longitude: float) -> float:
     Densification therefore keeps the branch the caller wrote. Segments
     that genuinely wrap are refused upstream by
     :func:`itacart.boundary.crosses_antemeridian`, so no segment reaching
-    here spans more than half the globe and the branch is unambiguous.
+    here spans **more** than half the globe.
+
+    At exactly half a globe the branch is not unambiguous, and this
+    function cannot make it so from one reference. Two points half a turn
+    of longitude apart lie on a single meridian circle: the geodesic
+    joining them runs through the pole, and the longitude changes by a
+    hundred and eighty degrees at the crossing. Both ``+180`` and
+    ``-180`` name that change and the quotient is exactly one half, so
+    the rounding decides, and it decides without knowing which of the two
+    the segment is walking towards. :func:`densify_segment` therefore
+    supplies the destination as the reference for the far half of the
+    walk rather than asking this function to guess.
     """
     return longitude - 360.0 * round((longitude - reference) / 360.0)
 

@@ -27,10 +27,12 @@ of the lattice except the last column of each row.
 
 from __future__ import annotations
 
-from typing import Iterable, Iterator, Sequence, cast
+from functools import lru_cache
+from typing import TYPE_CHECKING, Iterable, Iterator, Sequence, cast
 
 from ._existence import require_existing_cells
 from .constants import (
+    CELL_SIZE_M,
     MAX_RESOLUTION,
     MIN_RESOLUTION,
     QUADRANTS,
@@ -41,6 +43,7 @@ from .constants import (
 from .exceptions import (
     DomainError,
     GeometryError,
+    ITACaRTError,
     MaxResolutionError,
     MinResolutionError,
     NonExistentCellError,
@@ -54,6 +57,9 @@ from .index import (
     join_components,
     split_components,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - import cycle guard for annotations
+    from shapely.geometry import Polygon
 
 __all__ = [
     "get_parent",
@@ -73,6 +79,17 @@ _DESCENT_OPEN = "("
 _DESCENT_CLOSE = ")"
 
 _OVERLAP_EPSILON_RATIO = 1e-6
+
+# The share of a parent's own area that may stay uncovered by the children
+# found for it before the enumeration is declared incomplete. Measured, an
+# exact tiling leaves parts in the 1e-9 range of the parent, so this sits
+# three orders above the noise and far below one cell.
+_COVERAGE_EPSILON_RATIO = 1e-6
+
+# How many times the discovery lattice is halved before giving up. Each
+# pass quadruples the number of probes, so six passes reach a spacing of
+# one sixty-fourth of a cell side.
+_DISCOVERY_PASSES = 6
 """Fraction of a child's nominal area below which overlap is only contact.
 
 Border children are selected by intersecting plane rings, and two cells
@@ -287,16 +304,15 @@ def _children_of(cell: str) -> list[str]:
 
     Two regimes. A cell that does not absorb the domain border refines
     into exactly the level alphabet, and the children are read off the
-    string with no geometry at all. A cell that does absorb it reaches
-    east past its own column, so both its own stem and that of the column
-    immediately east are descended, and a candidate is kept when its
-    polygon actually lies inside the parent. Descending only the own stem
-    loses children.
+    string with no geometry at all. A cell that does absorb it holds
+    surface its nominal footprint does not, and that surface is spelled
+    elsewhere, so the children are found by geometry against the ring the
+    cell actually has.
 
-    The order is the enumeration order: own stem before eastern stem, and
-    within a stem the order of the level alphabet. This agrees with
-    sorting the children by component path, because the eastern stem
-    carries the larger column.
+    The order is canonical in both regimes: the component sort, which is
+    the alphabet order under one prefix and a total order across
+    prefixes. It does not depend on where a child was spelled, because
+    under an absorbing parent there is no single stem to order by.
     """
     from . import boundary
 
@@ -315,41 +331,179 @@ def _children_of(cell: str) -> list[str]:
     level = current + 1
     if not boundary.absorbs_border(cell):
         return [_descend(cell, code) for code in refinement_alphabet(level)]
-    return _border_children_of(cell, level)
+    return list(_border_children_of(cell, level))
 
 
-def _border_children_of(cell: str, level: int) -> list[str]:
-    """Children of a border-absorbing cell, selected geometrically.
+def _probe_points(body: "Polygon", spacing: float) -> list[tuple[float, float]]:
+    """Points inside ``body`` on a lattice of ``spacing``, plus one anchor.
 
-    A candidate whose ring is self-intersecting is refused loudly rather
-    than repaired. Repairing it would answer with a child set derived
-    from a polygon nobody meant to draw, and the caller would have no way
-    to tell. The one place this fires is the polar triangle, whose
-    refinement rings are malformed upstream.
+    The anchor guarantees at least one probe for a part thinner than the
+    spacing; the lattice does the rest. Completeness is not claimed here
+    and does not have to be: the caller proves it by area.
+    """
+    from shapely.geometry import Point
+
+    anchor = body.representative_point()
+    points = [(anchor.x, anchor.y)]
+    min_x, min_y, max_x, max_y = body.bounds
+    steps_x = int((max_x - min_x) / spacing) + 2
+    steps_y = int((max_y - min_y) / spacing) + 2
+    for i in range(steps_x):
+        x = min_x + (i + 0.5) * spacing
+        for j in range(steps_y):
+            y = min_y + (j + 0.5) * spacing
+            if body.contains(Point(x, y)):
+                points.append((x, y))
+    return points
+
+
+def _shared_area(first: "Polygon", second: "Polygon") -> float:
+    """Area common to two rings, robust to a shared edge.
+
+    Sibling rings meet along an edge both of them carry, and the geometry
+    engine reports a side location conflict on some of those pairs rather
+    than an empty overlap. A zero-width buffer rebuilds each ring from
+    its own edges and the second attempt succeeds; it is only reached
+    when the first fails, so the ordinary pair pays nothing for it.
+
+    This is not the repair of a folded ring. Both arguments have already
+    passed :func:`itacart.boundary.is_valid_cell`, which refuses a ring
+    that crosses itself, so what is being resolved here is a disagreement
+    about a shared edge between two rings that each close cleanly.
+    """
+    from shapely.errors import GEOSException
+
+    try:
+        return float(first.intersection(second).area)
+    except GEOSException:
+        return float(first.buffer(0).intersection(second.buffer(0)).area)
+
+
+@lru_cache(maxsize=4096)
+def _border_children_of(cell: str, level: int) -> tuple[str, ...]:
+    """Children of a border-absorbing cell, found geometrically and proved.
+
+    The ring the package returns for the parent is the authority. It is
+    the effective ring, after the pole and after absorption, and the
+    contract this function meets is stated against it: the effective
+    rings of the children cover the parent exactly and their interiors do
+    not overlap.
+
+    The children are not the descendants of the parent's nominal
+    footprint. Measured on the polar cap, that footprint covers 78.77% of
+    the parent and the shortfall does not shrink with depth, because the
+    absorbed surface is annexed at one level and then dropped by the next
+    descent. The surface the footprint misses is spelled under sibling
+    codes at an intermediate level -- spellings that name no cell of their
+    own -- so no shift of the resolution-1 column reaches it. The eastern
+    stem this function used to try is one such spelling among many, and
+    only for part of the lateral border.
+
+    So the candidates come from the point resolver instead, which answers
+    with the canonical spelling of whatever cell covers a place. A probe
+    lattice over the parent's ring proposes; the area test disposes. A
+    candidate whose ring folds is dropped rather than refused, because a
+    folded ring is an artefact of absorbing a border steeper than the
+    lattice and is not a child at all: measured on the polar triangle,
+    the tiling closes exactly without the four folded spellings.
+
+    Discovery is deliberately naive. If the probes miss surface, the
+    lattice is halved and the search runs again, and only an exhausted
+    budget is an error. Correctness is in the proof, not in the search,
+    so the search may be replaced by a cheaper one without touching what
+    this function means.
     """
     from shapely.geometry import Polygon
 
-    from . import boundary
+    from . import boundary, cells
     from .resolutions import cell_size
 
     body = Polygon(boundary.plane_ring(cell)[1])
-    epsilon = _OVERLAP_EPSILON_RATIO * cell_size(level) ** 2
-    children: list[str] = []
-    for step in (0, 1):
-        stem = _shift_column(cell, step)
-        for code in refinement_alphabet(level):
-            candidate = _descend(stem, code)
+    side = cell_size(level)
+    overlap_epsilon = _OVERLAP_EPSILON_RATIO * side**2
+    coverage_epsilon = _COVERAGE_EPSILON_RATIO * body.area
+    spacing = side / 2.0
+
+    for _ in range(_DISCOVERY_PASSES):
+        # Two sources, added rather than chosen between. The probes reach
+        # spellings no edit of the string produces, which is the polar
+        # case. The alphabet under the own and eastern stems reaches
+        # children whose overlap with the parent is a sliver too thin for
+        # a probe to land in, which is the lateral case and is where the
+        # old rule was right. Neither is trusted on its own; the contract
+        # below is what decides.
+        proposed: set[str] = set()
+        for x, y in _probe_points(body, spacing):
+            try:
+                proposed.add(cells.sinusoidal_to_cell(x, y, level))
+            except ITACaRTError:
+                continue
+        for step in (0, 1):
+            stem = _shift_column(cell, step)
+            for code in refinement_alphabet(level):
+                candidate = _descend(stem, code)
+                if boundary.is_valid_cell(candidate):
+                    proposed.add(candidate)
+
+        kept: list[str] = []
+        rings: list["Polygon"] = []
+        for candidate in proposed:
+            # One authority for whether a spelling names a cell, and it
+            # already refuses a folded ring. Nothing here repairs one: a
+            # fold is an artefact of absorbing a border steeper than the
+            # lattice, and the tiling closes without the spellings that
+            # carry one.
             if not boundary.is_valid_cell(candidate):
                 continue
             outline = Polygon(boundary.plane_ring(candidate)[1])
-            if not outline.is_valid:
-                raise GeometryError(
-                    f"the refinement ring of {candidate!r} is self-intersecting, "
-                    f"so the children of {cell!r} cannot be selected by overlap"
-                )
-            if outline.intersection(body).area > epsilon:
-                children.append(candidate)
-    return children
+            if _shared_area(outline, body) <= overlap_epsilon:
+                continue
+            kept.append(candidate)
+            rings.append(outline)
+
+        if not rings:
+            spacing /= 2.0
+            continue
+
+        # Areas rather than a union. Sibling rings share edges exactly,
+        # and the union of such rings is where the geometry engine
+        # reports a side location conflict; pairwise areas ask the same
+        # question without building the shape. The two agree only while
+        # the interiors are disjoint, which is the other half of the
+        # contract and is measured right here.
+        overlap = sum(
+            _shared_area(first, second)
+            for index, first in enumerate(rings)
+            for second in rings[index + 1 :]
+        )
+        covered = sum(_shared_area(ring, body) for ring in rings)
+        if body.area - covered + overlap > coverage_epsilon:
+            spacing /= 2.0
+            continue
+
+        # The tolerance for a shared edge cannot be a share of the cell
+        # area alone. Plane coordinates run to ten million metres, so one
+        # unit in the last place is about two ten-billionths of a metre,
+        # and two rings meeting along an edge disagree by a sliver that
+        # wide however small the cells are. Deep in the hierarchy that
+        # sliver outgrows a tolerance tied to the cell side: measured at
+        # resolution 13, the sliver is 2.6e-10 square metres and the
+        # side-based tolerance is 1.0e-10. The floor is therefore the
+        # total edge length times that unit, with room to spare, and it
+        # stays orders below any overlap a real pair of cells would show.
+        unit = 2.0**-52 * max(abs(value) for value in body.bounds)
+        noise = 8.0 * sum(ring.length for ring in rings) * unit
+        if overlap > max(overlap_epsilon, noise):
+            raise GeometryError(
+                f"the children found for {cell!r} overlap by {overlap:.6f} "
+                "square metres, so they do not partition it"
+            )
+        return tuple(sorted(kept, key=lambda c: _sort_key(split_components(c))))
+
+    raise GeometryError(
+        f"the children of {cell!r} could not be enumerated: the cells found "
+        "leave part of its ring uncovered, so they do not partition it"
+    )
 
 
 def get_children(
@@ -453,25 +607,90 @@ def get_descendants(index: str, target_res: int) -> Iterator[str]:
 def _parent_cell(cell: str) -> str:
     """The cell that actually fathers ``cell``, border cases included.
 
-    The lexical prefix is the answer everywhere except under a
-    border-absorbing parent, where the child may be spelled under the
-    column immediately east. That column never holds a cell of its own in
-    that row — it is exactly one past the last one — so a prefix that
-    fails :func:`itacart.boundary.is_valid_cell` is the signal to step one
-    column west.
+    The lexical prefix is the answer wherever it names a cell, and away
+    from an absorbing parent it is the answer with no geometry at all:
+    the alphabet defines the relation.
+
+    Where the prefix names nothing, the child was spelled under a
+    neighbour of its parent, and there are two ways that happens. On the
+    lateral border the neighbour is the resolution-1 column immediately
+    east, which never holds a cell of its own in that row; stepping one
+    column west finds the parent. On the polar cap the neighbour is a
+    *sibling code at an intermediate level* -- ``...(1(C2(1)))`` is a
+    child of ``...(1(B2))`` -- and no column shift reaches that spelling
+    from that child.
+
+    The old rule knew the first and not the second. Both are tried here,
+    and neither is trusted: a candidate is the parent only if the
+    corrected child relation returns this cell. The relation is
+    consumed, not restated.
     """
     from . import boundary
 
     components = split_components(cell)
     if _resolution_of(components) <= QUADRANT_RESOLUTION:
         raise MinResolutionError(f"{cell!r} is a quadrant and has no parent cell")
+
+    # The cheap path is only as good as the predicate under it. It used
+    # to accept a prefix whose effective ring folded -- ``...(3(A1))``
+    # reported an area and named nothing anyone drew -- and answered with
+    # it, which is how a child of the polar cap came to have two parents.
+    # The predicate refuses such a spelling now, so the path can be
+    # trusted; it is written this way to say that the trust is borrowed.
     prefix = join_components(components[:-1])
     if boundary.is_valid_cell(prefix):
-        return prefix
-    western = _shift_column(prefix, -1)
-    if boundary.is_valid_cell(western) and cell in _children_of(western):
-        return western
+        if not boundary.absorbs_border(prefix) or cell in _children_of(prefix):
+            return prefix
+
+    for candidate in _neighbouring_parents(components, prefix):
+        if cell in _children_of(candidate):
+            return candidate
     raise NonExistentCellError(f"{cell!r} has no parent cell in the domain")
+
+
+def _neighbouring_parents(components: Sequence[str], prefix: str) -> Iterator[str]:
+    """Cells at the prefix's own resolution that could father the cell.
+
+    Two families, in the order they cost. The column one west of the
+    prefix, which is the lateral border case and is a string edit. Then
+    the siblings of the prefix, reached through the nearest ancestor that
+    names a cell, which is the polar case and needs the child relation of
+    that ancestor.
+    """
+    from . import boundary
+
+    if len(components) > 2:
+        column_text, _, row_text = components[1].partition(RES1_SEPARATOR)
+        column, row = int(column_text), int(row_text)
+        side = CELL_SIZE_M[BASE_CELL_RESOLUTION]
+        assert side is not None
+        last = boundary.last_lattice_column(components[0], row, side)
+        # West as far as the absorbing column, not one step. A child can
+        # be spelled two columns past its parent -- ``NE(0819/0747(1))``
+        # belongs to ``NE(0817/0747)`` -- and a single step lands on a
+        # column that names no cell either.
+        for target in range(column - 1, last - 1, -1):
+            candidate = _shift_column(prefix, target - column)
+            if boundary.is_valid_cell(candidate):
+                yield candidate
+
+    wanted = len(components) - 1
+    for depth in range(wanted - 1, 1, -1):
+        ancestor = join_components(components[:depth])
+        if not boundary.is_valid_cell(ancestor):
+            continue
+        # The nearest ancestor that names a cell can sit several levels
+        # above the prefix, because an intermediate spelling names nothing
+        # either. Descend back down through the corrected relation until
+        # the prefix's own resolution is reached; those cells are the
+        # siblings the prefix should have had.
+        frontier = [ancestor]
+        for _ in range(depth, wanted):
+            frontier = [child for cell in frontier for child in _children_of(cell)]
+        for sibling in frontier:
+            if sibling != prefix:
+                yield sibling
+        return
 
 
 def child_position(cell: str) -> int | list[int]:
@@ -609,20 +828,22 @@ def _is_complete(parent: str, present: set[tuple[str, ...]]) -> bool:
 
 
 def _candidate_parents(present: set[tuple[str, ...]]) -> set[str]:
-    """Cells that could absorb one of the paths in ``present``."""
-    from . import boundary
+    """Cells that could absorb one of the paths in ``present``.
 
+    Asks :func:`_parent_cell` rather than editing the string, for the
+    reason given there: under an absorbing parent a child can be spelled
+    under a sibling code at an intermediate level, which no column shift
+    reaches. A path whose parent cannot be resolved proposes nothing,
+    since a set that holds it was never going to collapse.
+    """
     candidates: set[str] = set()
     for components in present:
         if _resolution_of(components) <= BASE_CELL_RESOLUTION:
             continue
-        prefix = join_components(components[:-1])
-        if boundary.is_valid_cell(prefix):
-            candidates.add(prefix)
+        try:
+            candidates.add(_parent_cell(join_components(components)))
+        except (NonExistentCellError, MinResolutionError):
             continue
-        western = _shift_column(prefix, -1)
-        if boundary.is_valid_cell(western):
-            candidates.add(western)
     return candidates
 
 

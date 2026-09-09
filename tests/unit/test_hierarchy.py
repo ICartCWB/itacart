@@ -28,7 +28,6 @@ from itacart.constants import (
 )
 from itacart.exceptions import (
     DomainError,
-    GeometryError,
     MaxResolutionError,
     MinResolutionError,
     NonExistentCellError,
@@ -301,8 +300,15 @@ class TestGetChildrenOnTheBorder:
             assert cell is not None
             assert len(hy._children_of(cell)) == count
 
-    def test_the_count_stays_between_two_and_six_over_the_family(self) -> None:
+    def test_the_count_stays_between_two_and_seven_over_the_family(self) -> None:
         """Bounds the antemeridian family, which is not the whole globe.
+
+        Six was the bound while the enumeration reached one column east
+        and stopped. It reaches as far as the absorbing column now, and a
+        child can be spelled two columns out -- ``NE(0819/0747(1))``
+        belongs to ``NE(0817/0747)`` -- so the bound is seven. Seven is
+        not an instance: over the four quadrants it occurs in 45 cells of
+        4 000, and the count is pinned there rather than here.
 
         The polar cell sits outside these bounds with a single child, and
         outside this family: it is cut short by the pole rather than by
@@ -311,7 +317,7 @@ class TestGetChildrenOnTheBorder:
         """
         counts = {len(hy._children_of(parent)) for parent in _every_row_last_cell("NE")}
         assert min(counts) >= 2
-        assert max(counts) <= 6
+        assert max(counts) <= 7
         assert len(hy._children_of("NE(0000/1000)")) < min(counts)
 
     def test_descending_only_the_own_stem_would_lose_children(self) -> None:
@@ -955,28 +961,31 @@ class TestPolarRefinement:
             for cell in _every_row_last_cell(quadrant):
                 hy._children_of(cell)
 
-    def test_a_malformed_ring_is_still_refused_rather_than_repaired(
-        self, monkeypatch: pytest.MonkeyPatch
+    def test_a_folded_ring_is_refused_by_existence_and_never_repaired(
+        self,
     ) -> None:
-        """The guard survives the polar row that used to trip it.
+        """The refusal moved, and it moved to the right place.
 
-        No cell produces a self-intersecting ring any more, so the only
-        way to reach the refusal is to hand the selector one. Repairing
-        such a ring would answer with a child set derived from a polygon
-        nobody meant to draw, and the caller would have no way to tell.
+        The selector used to raise on a self-intersecting candidate,
+        because the polar triangle produced them and repairing one would
+        have answered with a child set derived from a polygon nobody
+        meant to draw. That guard asked the question one layer too late:
+        a folded ring does not name a cell at all, and the spellings that
+        carry one are not candidates to be refused but non-cells to be
+        skipped.
+
+        So the rule lives in the existence predicate now, and the tiling
+        is what proves nothing was lost by skipping them: the polar
+        triangle closes to 100% without its four folded spellings.
         """
-        bowtie = [(0.0, 0.0), (1.0, 1.0), (1.0, 0.0), (0.0, 1.0)]
-        genuine = boundary.plane_ring
+        folded = "NE(0000/1000(3(A1)))"
+        assert not boundary.is_valid_cell(folded)
+        assert boundary.ring_area(boundary.plane_ring(folded)[1]) > 100_000.0
 
-        def malformed(cell: str) -> tuple[str, list[tuple[float, float]]]:
-            if cell == EQUATOR_TRAPEZOID:
-                return genuine(cell)
-            return "parallelogram", bowtie
-
-        monkeypatch.setattr(boundary, "plane_ring", malformed)
-        monkeypatch.setattr(boundary, "is_valid_cell", lambda cell: True)
-        with pytest.raises(GeometryError):
-            hy._border_children_of(EQUATOR_TRAPEZOID, 2)
+        children = hy._children_of("NE(0000/1000(1(B2)))")
+        assert folded not in children
+        for child in children:
+            assert boundary.is_valid_cell(child)
 
 
 # --------------------------------------------------------------------------

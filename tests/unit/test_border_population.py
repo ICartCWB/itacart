@@ -251,12 +251,18 @@ def test_the_out_of_ratio_population_is_inside_the_last_column_family() -> None:
 
     assert len(off) == 2852
     assert len(family) - len(off) == 1150
+    # Six was the top of this distribution while the child walk reached
+    # one column east and stopped. It reaches as far as the absorbing
+    # column now, and forty-five members gained a seventh child spelled
+    # two columns out, which is where they came from: the six-count fell
+    # from 839 to 794 by exactly that many.
     assert collections.Counter(n for n in off.values()) == {
         1: 2,
         2: 423,
         3: 752,
         5: 836,
-        6: 839,
+        6: 794,
+        7: 45,
     }
     assert collections.Counter(cell[:2] for cell in off) == {
         "NE": 710,
@@ -374,16 +380,19 @@ def test_the_refused_band_profile_over_every_row_of_every_quadrant() -> None:
         verdicts.update(name for _, name in band)
 
     # The refusals that come from a structure rather than from a contact
-    # are pinned by equality: three polar families and one topology
-    # failure, none of them decided by a predicate on a marginal overlap.
-    assert verdicts["DomainError"] == 13
+    # are pinned by equality, none of them decided by a predicate on a
+    # marginal overlap. The polar families are four, not three and a
+    # topology failure: the fourth used to arrive as a self-intersection
+    # of its own densified boundary, and repairing the walk over the pole
+    # moved it onto the refusal its position earns. The count of the
+    # domain family therefore rose by exactly the one that left.
+    assert verdicts["DomainError"] == 14
     assert verdicts["AntemeridianError"] == 2
-    assert verdicts["GeometryError"] == 1
+    assert "GeometryError" not in verdicts
     assert set(verdicts) == {
         "NonExistentCellError",
         "DomainError",
         "AntemeridianError",
-        "GeometryError",
     }
 
     # The total is not pinned as a literal, because part of it is a
@@ -590,23 +599,23 @@ def test_a_cell_whose_edge_lies_on_a_zone_edge_is_still_a_polygon() -> None:
         itacart.count_internal_cells(boundary, 2)
 
 
-def test_the_polar_row_is_refused_everywhere_but_not_by_the_same_route() -> None:
-    """Three quadrants refuse on the domain, one on the geometry.
+def test_the_polar_row_is_refused_everywhere_by_the_same_route() -> None:
+    """Four quadrants refuse on the domain, and the reason is one.
 
     The polar row is refused by design: it is clipped by the pole and
-    does not carry the nominal area. Three quadrants say exactly that.
-    The fourth never reaches the check, because splitting its boundary by
-    quadrant fails first.
+    does not carry the nominal area. All four quadrants now say exactly
+    that. One of them used to say something else, and the difference was
+    never a property of the grid.
 
     The cause is measured rather than inferred, and it is the same in all
     four. The ring of a polar-row cell stops short of the pole, and its
     densified form does not: an edge spanning half a turn of longitude is
     filled in along the geodesic joining its ends, and that geodesic runs
-    through the pole. All four densified rings reach ninety degrees. Three
-    of them come back without crossing themselves and one does, so the
-    quadrant that behaves differently is not exhibiting a property of the
-    grid -- it is the same defect landing on the wrong side of a validity
-    test.
+    through the pole. All four densified rings reach ninety degrees --
+    that part is geodesy and stands. What did not stand was the longitude
+    the walk gave the far side of the pole, which is what
+    :func:`test_the_walk_over_the_pole_lands_on_the_branch_it_was_sent_to`
+    pins.
     """
     verdicts = {}
     for quadrant in QUADRANTS:
@@ -623,6 +632,7 @@ def test_the_polar_row_is_refused_everywhere_but_not_by_the_same_route() -> None
         reached = max(abs(y) for _, y in densified.exterior.coords)
         assert reached > max(abs(point[1]) for point in ring)
         assert reached > 89.9999
+        assert densified.is_valid, quadrant
 
         try:
             itacart.count_internal_cells(polygon, 2)
@@ -634,5 +644,54 @@ def test_the_polar_row_is_refused_everywhere_but_not_by_the_same_route() -> None
         "NE": "DomainError",
         "NW": "DomainError",
         "SW": "DomainError",
-        "SE": "GeometryError",
+        "SE": "DomainError",
     }
+
+
+def test_the_walk_over_the_pole_lands_on_the_branch_it_was_sent_to() -> None:
+    """A geodesic through the pole ends its walk where its segment ends.
+
+    Two points half a turn of longitude apart lie on one meridian circle,
+    so the geodesic joining them runs through the pole and the longitude
+    changes by a hundred and eighty degrees at the crossing. Both
+    ``+180`` and ``-180`` name that change, and the direct solution
+    returns whichever its normalisation picks. Placing every interior
+    point on the branch of the *start* left the far half free to land on
+    the opposite branch from the vertex it was walking towards, which
+    folds the ring across the globe.
+
+    Three of the four polar-row cells survived that because their far
+    vertex sits on the prime meridian, where both branches agree. The
+    fourth walks towards a hundred and eighty and did not. The property
+    asserted here is over all four, since one passing example is what the
+    grid had before.
+    """
+    for quadrant in QUADRANTS:
+        ring = itacart.cell_to_boundary(f"{quadrant}(0001/0999)", close=True)
+        edges = [
+            (ring[index], ring[index + 1])
+            for index in range(len(ring) - 1)
+            if abs(abs(ring[index + 1][0] - ring[index][0]) - 180.0) < 1e-9
+        ]
+        assert len(edges) == 1, f"{quadrant}: expected one edge spanning half a turn"
+
+        start, end = edges[0]
+        walk = itacart.densify_segment(start, end, 1000.0)
+        assert len(walk) > 2, quadrant
+
+        # The pole is reached, and it is reached at the midpoint because
+        # the edge is symmetric about it. Everything after that midpoint
+        # belongs to the destination's half turn, and the test asks for
+        # the whole half rather than for the last point alone.
+        # Distance to the pole, not equality with it. The walk arrives by
+        # integration and stops a fraction of a micrometre short, so
+        # asserting the printed ninety would pin the formatting rather
+        # than the geodesy. One metre is three orders below the step this
+        # walk takes, which makes the claim "it reaches the pole" and not
+        # "it rounds well".
+        shortfall = 90.0 - max(abs(latitude) for _, latitude in walk)
+        assert shortfall * 111_319.0 < 1.0, (quadrant, shortfall)
+
+        far = walk[len(walk) // 2 + 1 :]
+        for longitude, _ in far:
+            assert abs(longitude - end[0]) < 90.0, (quadrant, longitude, end[0])

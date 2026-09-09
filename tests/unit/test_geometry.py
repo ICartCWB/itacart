@@ -1803,9 +1803,13 @@ def test_border_children_survive_every_refinement() -> None:
     says they should: a threshold pushed too far down would admit
     candidates the parent does not hold and iron that deviation flat.
     The measured series for row 100, resolutions 1 to 12, is
-    ``2, 21, 4, 24, 4, 23, 4, 25, 4, 25, 4, 24``. Its first seven
-    entries are exactly the ones measured before the fix, and the eighth
-    used to be zero.
+    ``2, 21, 4, 26, 5, 11, 5, 9, 2, 26, 4, 21``. It was re-measured when
+    the child enumeration stopped assuming that a child is spelled under
+    the parent's own stem or the column immediately east: the first three
+    entries are unchanged and the rest moved, because the old walk lost
+    children the deeper it went. The series before that correction read
+    ``2, 21, 4, 24, 4, 23, 4, 25, 4, 25, 4, 24``, and its own first seven
+    entries were what a still earlier fix had produced.
     """
     side = itacart.cell_size(1)
     row = 100
@@ -1824,15 +1828,15 @@ def test_border_children_survive_every_refinement() -> None:
         2,
         21,
         4,
-        24,
+        26,
+        5,
+        11,
+        5,
+        9,
+        2,
+        26,
         4,
-        23,
-        4,
-        25,
-        4,
-        25,
-        4,
-        24,
+        21,
     ], counts
     assert all(count > 0 for count in counts.values()), counts
     deviating = [r for r in counts if counts[r] != itacart.refinement_ratio(r + 1)]
@@ -1937,6 +1941,28 @@ def test_densification_keeps_the_longitude_branch_it_was_given() -> None:
     assert min(longitudes) > 179.0, min(longitudes)
     assert max(longitudes) <= 180.3 + 1e-9, max(longitudes)
     assert dense.is_valid
+
+
+def test_an_outline_that_crosses_itself_is_refused_with_our_own_name() -> None:
+    """A self-intersecting input reaches the clip, and is named there.
+
+    The quadrant split hands the plane geometry to the engine, which
+    refuses a figure with no interior and raises its own exception. That
+    exception used to reach callers through a public name, and the cell
+    that carried it was a polar-row cell whose densified boundary folded
+    over the pole -- a defect of this package, now repaired at the walk.
+
+    A caller's own bowtie is not a defect and is not going away, so the
+    path stays and is pinned here rather than through the grid. Both
+    public entry points are asserted: they share the machinery, and a
+    future split of it should not quietly leave one of them uncovered.
+    """
+    bowtie = Polygon([(10.0, 10.0), (10.2, 10.2), (10.0, 10.2), (10.2, 10.0)])
+    assert not bowtie.is_valid
+
+    for call in (itacart.polyfill, itacart.count_internal_cells):
+        with pytest.raises(GeometryError, match="crosses itself"):
+            call(bowtie, 7)
 
 
 # --------------------------------------------------------------------------

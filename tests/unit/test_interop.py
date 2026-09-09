@@ -281,24 +281,28 @@ def test_the_pole_detector_asks_for_the_pole_and_not_for_nearness() -> None:
     producing cells that are nearer.
     """
     cap = NORTHERN_CAP
-    for _ in range(3):
-        cap = [c for c in _flatten(itacart.get_children(cap)) if _apex(c) == 90.0][0]
-    siblings = _flatten(itacart.get_children(cap))
+    witnesses = 0
+    for _ in range(6):
+        siblings = _flatten(itacart.get_children(cap))
 
-    near_but_not_pole = [cell for cell in siblings if 89.999 <= _apex(cell) < 90.0]
-    assert len(near_but_not_pole) == 3, "the defect's own witnesses are gone"
+        near_but_not_pole = [cell for cell in siblings if 89.999 <= _apex(cell) < 90.0]
+        witnesses += len(near_but_not_pole)
+        for cell in near_but_not_pole:
+            assert not interop._holds_pole(_ring(cell))
+            raw = Polygon(_ring(cell))
+            assert interop._cell_polygon(cell).area == pytest.approx(
+                raw.area, rel=1e-12
+            )
 
-    for cell in near_but_not_pole:
-        assert not interop._holds_pole(_ring(cell))
-        raw = Polygon(_ring(cell))
-        assert interop._cell_polygon(cell).area == pytest.approx(raw.area, rel=1e-12)
+        footprints = {interop._cell_polygon(cell).wkt for cell in near_but_not_pole}
+        assert len(footprints) == len(near_but_not_pole), "near cells exported as one"
 
-    footprints = {interop._cell_polygon(cell).wkt for cell in near_but_not_pole}
-    assert len(footprints) == 3, "three cells must not export as one polygon"
+        holders = [cell for cell in siblings if _apex(cell) == 90.0]
+        assert len(holders) == 1
+        assert interop._holds_pole(_ring(holders[0]))
+        cap = holders[0]
 
-    holders = [cell for cell in siblings if _apex(cell) == 90.0]
-    assert len(holders) == 1
-    assert interop._holds_pole(_ring(holders[0]))
+    assert witnesses > 0, "the defect's own witnesses are gone"
 
 
 def test_a_pole_vertex_and_a_full_span_name_the_same_cells_where_measured() -> None:
@@ -312,29 +316,33 @@ def test_a_pole_vertex_and_a_full_span_name_the_same_cells_where_measured() -> N
     It is recorded as an empirical regularity over an enumerated
     population and not as a property of the grid, and the distinction
     earns its keep here. The *proxy* for the first condition -- a vertex
-    within a thousandth of a degree of the pole -- stops agreeing at
-    resolution five, where three cells per level satisfy it without being
-    caps. A rule that survives and a proxy that does not are different
-    facts, and only the rule is stated.
+    within a thousandth of a degree of the pole -- does not agree. What
+    is asserted about it is the property and not its count: the proxy
+    never names the cap. How many cells it does name varies with the
+    level and with the enumeration, and pinning that number pinned an
+    accident: it read 0 or 3 while the descent lost children near the
+    pole, and 0, 0, 0, 7, 3, 5, 3 once the enumeration was corrected. A
+    rule that survives and a proxy that does not are different facts, and
+    only the rule is stated.
 
-    The descent stops at resolution six because ``get_children`` raises
-    ``GeometryError`` there on a self-intersecting refinement ring. That
-    is a hierarchy defect and outside this module; the population this
-    rule is claimed over ends where the measurement could.
+    The descent used to stop at resolution six, where ``get_children``
+    raised ``GeometryError`` on a self-intersecting refinement ring. It
+    does not raise any more, so the population is claimed over seven
+    refinements rather than five.
     """
     cell = NORTHERN_CAP
     levels = 0
-    for _ in range(5):
+    for _ in range(7):
         children = _flatten(itacart.get_children(cell))
         holders = [child for child in children if _apex(child) == 90.0]
         full = [child for child in children if abs(_span(child) - 360.0) < 1e-9]
         assert holders == full, f"they parted company one level below {cell}"
         assert len(holders) == 1
         near = [child for child in children if 89.999 <= _apex(child) < 90.0]
-        assert len(near) in (0, 3)
+        assert not set(near) & set(holders), "the proxy must not name the cap"
         levels += 1
         cell = holders[0]
-    assert levels == 5, "the rule is claimed over five refinements and no more"
+    assert levels == 7, "the rule is claimed over seven refinements and no more"
 
 
 # --------------------------------------------------------------------------
