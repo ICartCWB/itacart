@@ -31,7 +31,7 @@ from shapely.geometry import (
 
 import itacart
 from itacart import boundary, geometry, hierarchy
-from itacart.constants import QUADRANTS
+from itacart.constants import MERIDIAN_QUADRANT, QUADRANTS
 from itacart.exceptions import (
     AntemeridianError,
     DensificationError,
@@ -847,9 +847,12 @@ def test_count_stack_depth_is_the_resolution_difference(parcel: Polygon) -> None
         side: float,
         level: int,
         target: int,
+        containment: str = "center",
     ) -> int:
         seen.append(level)
-        return original(prepared, u0, v0, side, level, target)  # type: ignore[arg-type]
+        return original(  # type: ignore[arg-type]
+            prepared, u0, v0, side, level, target, containment
+        )
 
     geometry._count_node = _traced  # type: ignore[assignment]
     try:
@@ -1264,25 +1267,40 @@ def test_every_row_refuses_its_own_last_column() -> None:
     assert checked == 999
 
 
-def test_the_polar_row_is_refused() -> None:
+def test_the_polar_row_is_the_row_the_pole_falls_in() -> None:
+    """Which row is polar, derived from the pole rather than from a count.
+
+    It used to be read off ``last_lattice_column`` as the last row whose
+    answer is above zero, which made it row 999. That derivation
+    saturates: the answer is zero for row 1000 and zero again for 1001,
+    and zero means one cell in an eastern quadrant and none in a western
+    one. Row 999 was called polar in all four quadrants on the strength
+    of it, and its cells -- valid, six real children each, their highest
+    point 1 966 metres below the pole -- were refused for a property they
+    do not have.
+    """
     side = itacart.cell_size(1)
-    polar = max(
-        row for row in range(1100) if itacart.last_lattice_column("NE", row, side) > 0
-    )
+    polar = int(math.floor(MERIDIAN_QUADRANT / side))
+    assert polar == 1000
+
     with pytest.raises(DomainError, match="polar row"):
-        geometry._check_addressable("NE", 1, polar)
+        geometry._check_addressable("NE", 0, polar)
+
+    # The row below it is not polar, and the refusal it draws is the one
+    # its last column earns, which the fill knows how to descend.
+    with pytest.raises(NonExistentCellError, match="last lattice column"):
+        geometry._check_addressable("NE", 1, polar - 1)
+    geometry._check_addressable("NE", 0, polar - 1)
+
+    # A western quadrant has no column zero, so its polar row addresses
+    # nothing at all and says so before the polar branch is reached.
+    with pytest.raises(DomainError, match="addresses no cell"):
+        geometry._check_addressable("NW", 1, polar)
 
 
 def test_a_row_above_the_pole_addresses_nothing() -> None:
     side = itacart.cell_size(1)
-    beyond = (
-        max(
-            row
-            for row in range(1100)
-            if itacart.last_lattice_column("NE", row, side) > 0
-        )
-        + 1
-    )
+    beyond = int(math.floor(MERIDIAN_QUADRANT / side)) + 1
     with pytest.raises(DomainError, match="addresses no cell"):
         geometry._check_addressable("NE", 1, beyond)
 
@@ -1918,11 +1936,33 @@ def test_a_footprint_past_180_outside_every_zone_is_refused_by_name() -> None:
     What matters here is not that it is refused but that the refusal is
     the package's, not the geometry engine's. A raw ``GEOSException``
     tells the caller nothing they can act on.
+
+    The name used to be ``NonExistentCellError``, and it was an accident:
+    such a footprint projects into the western quadrant at a column past
+    the end of its row, and the fill refused that column outright, so the
+    guarantee about the line rested on a limitation about absorbing
+    cells. The fill descends that column now. The refusal is the
+    antemeridian's own, and the zoned rows are asserted alongside it so
+    that a guard which refused everything past the line would not pass.
     """
     footprint = Polygon([(179.9, 5.0), (180.3, 5.0), (180.3, 5.2), (179.9, 5.2)])
     assert not itacart.crosses_antemeridian(footprint)
-    with pytest.raises(NonExistentCellError):
+    with pytest.raises(AntemeridianError):
         itacart.polyfill(footprint, 3)
+
+    beyond_the_reach = Polygon(
+        [(190.0, 68.0), (191.0, 68.0), (191.0, 68.2), (190.0, 68.2)]
+    )
+    with pytest.raises(AntemeridianError):
+        itacart.polyfill(beyond_the_reach, 3)
+
+    for zoned in (
+        Polygon([(179.9, 68.0), (182.0, 68.0), (182.0, 68.2), (179.9, 68.2)]),
+        Polygon([(179.9, -18.0), (181.0, -18.0), (181.0, -17.8), (179.9, -17.8)]),
+    ):
+        cells = itacart.decompose(itacart.polyfill(zoned, 3))
+        assert cells
+        assert all(itacart.is_valid_cell(cell) for cell in cells)
 
 
 def test_densification_keeps_the_longitude_branch_it_was_given() -> None:
@@ -2012,20 +2052,20 @@ def test_a_parcel_beside_the_meridian_is_filled_at_every_resolution() -> None:
         assert all(itacart.get_resolution(c) == resolution for c in cells)
 
 
-def test_the_absorbing_cell_is_refused_at_every_resolution() -> None:
-    """The last lattice column is refused whole, and only it.
+def test_the_absorbing_cell_is_filled_at_every_resolution() -> None:
+    """The last lattice column is walked, and answers what names it.
 
-    The screen used to let a parcel through whenever it happened to sit
-    on the inner side of the band, so the absorbing cell was sometimes
-    emitted and sometimes refused at the same resolution, depending on
-    where in it the parcel fell. It is refused throughout now, and the
-    neighbouring ordinary column is filled throughout.
+    This is the equality the refusing version of this test said it would
+    become. The fill used to refuse the whole column because its cell is
+    not the sheared square the descent tests; it now descends the tree
+    the hierarchy proves for that cell, whose family runs two to seven
+    children rather than ``d`` squared.
 
-    **A limitation of the fill, not a property of the grid.** The cell
-    exists: ``geo_to_cell`` names it and the hierarchy addresses its
-    children. The refusal stands only until the fill can descend a
-    trapezoid, and this test becomes an equality against ``geo_to_cell``
-    when it can.
+    The assertion is against ``geo_to_cell`` rather than against a
+    literal: a parcel small enough to sit inside one target cell must be
+    answered by the cell that names its own interior. The neighbouring
+    ordinary column is filled alongside, so a fill that had stopped
+    working everywhere would not pass.
     """
     side = itacart.cell_size(1)
     metres = 60.0 / 111_319.0
@@ -2055,35 +2095,43 @@ def test_the_absorbing_cell_is_refused_at_every_resolution() -> None:
             ]
         )
         for resolution in (1, 5):
-            with pytest.raises(NonExistentCellError, match="last lattice column"):
-                itacart.polyfill(absorbing, resolution, containment="intersects")
-            cells = itacart.decompose(
-                itacart.polyfill(ordinary, resolution, containment="intersects")
+            for parcel in (absorbing, ordinary):
+                cells = itacart.decompose(
+                    itacart.polyfill(parcel, resolution, containment="intersects")
+                )
+                assert cells
+                assert all(itacart.is_valid_cell(cell) for cell in cells)
+
+            named = itacart.geo_to_cell(
+                middle + metres / 2.0, latitude + metres / 2.0, resolution
             )
-            assert cells
-            assert all(itacart.is_valid_cell(cell) for cell in cells)
+            covering = itacart.decompose(
+                itacart.polyfill(absorbing, resolution, containment="intersects")
+            )
+            assert named in covering, (row, resolution, named)
 
 
-def test_the_polar_screen_still_narrows_with_the_target_resolution() -> None:
-    """The escape is alive, and on the family it was built for.
+def test_the_row_below_the_pole_no_longer_needs_the_escape() -> None:
+    """The narrowing was carrying a row that should never have needed it.
 
-    A base cell of a refused family holds mostly ordinary descendants, so
-    the screen is measured at the target side rather than at resolution
-    1. That narrowing is gone from the last lattice column, which is
-    refused whole until the fill can descend a trapezoid; the polar row
-    keeps it, and this is the end-to-end reading.
+    The screen is applied at resolution 1 and is conservative, so a
+    refused base cell used to keep an escape: measured at the target side
+    instead, most of its descendants are ordinary and can be let through.
+    Row 999 lived on that escape, refused outright at resolution 1 and
+    filled only from some resolution down.
+
+    It was refused because it was miscounted as the polar row. It is a
+    row of ordinary border-absorbing trapezoids, and it fills at every
+    resolution now, resolution 1 included, without the escape being
+    involved at all.
 
     The cells are checked against ``geo_to_cell`` rather than only for
-    existence: an escape that let through cells nothing else would name
-    would be a hole, not a narrowing.
+    existence: a fill that named cells nothing else would name would be a
+    hole, not a repair.
     """
     side = itacart.cell_size(1)
-    polar = max(
-        row
-        for row in range(900, 1001)
-        if itacart.last_lattice_column("NE", row, side) > 0
-    )
-    ring = itacart.cell_to_boundary(f"NE(0001/{polar:04d})")
+    polar = int(math.floor(MERIDIAN_QUADRANT / side))
+    ring = itacart.cell_to_boundary(f"NE(0001/{polar - 1:04d})")
     latitudes = [y for _, y in ring]
     longitudes = [x for x, _ in ring]
     latitude = min(latitudes) + 0.95 * (max(latitudes) - min(latitudes))
@@ -2098,21 +2146,81 @@ def test_the_polar_screen_still_narrows_with_the_target_resolution() -> None:
         ]
     )
 
-    with pytest.raises(DomainError, match="polar row"):
-        itacart.polyfill(parcel, 1, containment="intersects")
-
-    for resolution in (5, 7):
+    for resolution in (1, 5, 7):
         cells = itacart.decompose(
             itacart.polyfill(parcel, resolution, containment="intersects")
         )
-        assert cells
+        assert cells, resolution
         assert all(itacart.is_valid_cell(cell) for cell in cells)
         assert (
             itacart.geo_to_cell(
                 longitude + metres / 2.0, latitude + metres / 2.0, resolution
             )
             in cells
+        ), resolution
+
+
+def test_the_meridian_walk_reaches_the_polar_row_and_stops_there() -> None:
+    """The seam walk runs to the pole's own row, and no further.
+
+    Column zero is skipped by ``_base_cells`` on purpose, because it
+    names the meridian triangle this walk descends, so the cap is
+    reachable through this walk or not at all. It used to stop two rows
+    short: the walk asked ``last_lattice_column`` about the row and the
+    row above and read an answer of zero as *no cell*, which is one cell
+    in an eastern quadrant and none in a western one, and which is zero
+    for row 1000 and zero again for 1001.
+
+    It asks the pole now. A region reaching ninety degrees fills every
+    row of the seam up to and including the polar one, and the cap is
+    among the cells it names.
+    """
+    region = Polygon([(-0.2, 89.0), (0.2, 89.0), (0.2, 90.0), (-0.2, 90.0)])
+    plane, _views = geometry._prepare(region, 1, densify=True)
+    rows = geometry._meridian_rows(plane)
+    assert rows
+    side = itacart.cell_size(1)
+    polar = int(math.floor(MERIDIAN_QUADRANT / side))
+    last = max(row for _hemisphere, row in rows)
+    assert last == polar
+    assert all(row <= polar for _hemisphere, row in rows), rows
+
+    cells = itacart.decompose(itacart.polyfill(region, 1))
+    assert cells
+    assert all(itacart.is_valid_cell(cell) for cell in cells)
+    assert f"NE({0:0{4}d}/{polar:04d})" in cells, cells
+
+
+def test_a_geometry_touching_an_extension_zone_is_not_lifted() -> None:
+    """Touching the zone is not entering it.
+
+    A polygon whose edge lies exactly on a zone window leaves a
+    zero-width piece inside it, and lifting that piece would move a line
+    the geometry only borders past the antemeridian while the body of it
+    stayed behind. Read on both zones and on both edges the geometry can
+    meet -- the longitude limit and the poleward end of the row band --
+    because the two are cut by different kinds of line.
+    """
+    for window in geometry._extension_windows():
+        west, south, east, north = window.bounds
+        beyond_the_limit = Polygon(
+            [
+                (east, south + 0.5),
+                (east + 0.5, south + 0.5),
+                (east + 0.5, north - 0.5),
+                (east, north - 0.5),
+            ]
         )
+        beyond_the_band = Polygon(
+            [
+                (west + 0.5, north),
+                (east - 0.5, north),
+                (east - 0.5, north + 0.5),
+                (west + 0.5, north + 0.5),
+            ]
+        )
+        for outside in (beyond_the_limit, beyond_the_band):
+            assert geometry._lift_extensions(outside).equals(outside)
 
 
 def test_no_column_past_the_last_ever_escapes_the_screen() -> None:
@@ -2139,103 +2247,6 @@ def test_no_column_past_the_last_ever_escapes_the_screen() -> None:
                     f"{quadrant} column {column} of row {row} is not covered, "
                     "so a geometry inside it would escape the screen"
                 )
-
-
-def test_what_is_filled_beside_the_meridian_is_ordinary_and_nominal() -> None:
-    """The cells the narrower screen lets through are real cells.
-
-    Inside an anomalous base cell the index descent and the square
-    descent are not the same tree, so admitting geometry there is only
-    safe if the indices the fill emits name the squares it accepted.
-    Measured on the round trip rather than assumed.
-    """
-    parcel = _parcel_east_of_greenwich(0.001)
-    cells = itacart.decompose(itacart.polyfill(parcel, 7))
-    assert cells
-    nominal = itacart.nominal_cell_area(7)
-    for cell in cells:
-        assert itacart.is_valid_index(cell), cell
-        assert not itacart.absorbs_border(cell), cell
-        assert itacart.cell_shape(cell) == "parallelogram", cell
-        area = Polygon(boundary.plane_ring(cell)[1]).area
-        assert area == pytest.approx(nominal, rel=1e-9), cell
-        assert itacart.cell_to_polygon(cell).intersects(parcel), cell
-
-
-def test_the_two_remaining_families_are_refused_when_actually_touched() -> None:
-    """Narrowing the radius must not narrow the refusal itself.
-
-    Two families, not three. The prime-meridian column left the screen
-    when it gained a descent of its own, and a parcel sitting on the
-    line is now filled; the last lattice column and the polar row are
-    refused exactly as before, in all four quadrants.
-
-    Read at resolution 7, where the old version read at 13. The old one
-    could afford 13 because the screen refused before counting anything;
-    now the parcel is actually filled, and at a one-centimetre cell a
-    sixty-metre parcel is thirty-six million of them.
-    """
-    on_the_line = itacart.decompose(itacart.polyfill(_parcel_east_of_greenwich(0.0), 7))
-    assert on_the_line
-    assert all(itacart.is_valid_cell(cell) for cell in on_the_line)
-    side = itacart.cell_size(1)
-    for quadrant in QUADRANTS:
-        polar = max(
-            row
-            for row in range(700, 1000)
-            if itacart.last_lattice_column(quadrant, row, side) > 0
-        )
-        for column, row in (
-            (itacart.last_lattice_column(quadrant, 100, side), 100),
-            (1, polar),
-        ):
-            with pytest.raises((NonExistentCellError, DomainError)):
-                geometry._check_addressable(quadrant, column, row)
-
-
-def _screen_refuses(quadrant: str, u0: float, v0: float, side: float) -> bool:
-    """The geometric screen, expressed only on the node's own coordinates.
-
-    The lattice column of a node of side ``s`` at ``(u0, v0)`` is
-    ``(u0 - v0) / s``, which reduces to ``u_index - row`` at resolution
-    1. Nothing here names a cell, which is the point: the fill may not
-    reach an index-rendering door, so it cannot ask ``absorbs_border``.
-    """
-    column = round((u0 - v0) / side)
-    row = round(v0 / side)
-    last_here = itacart.last_lattice_column(quadrant, row, side)
-    beyond = itacart.last_lattice_column(quadrant, row + 1, side)
-    return column <= 0 or last_here <= 0 or beyond <= 0 or column >= last_here
-
-
-def _is_anomalous(cell: str) -> bool:
-    """The index-side truth the screen has to agree with."""
-    try:
-        if itacart.absorbs_border(cell):
-            return True
-        return itacart.cell_shape(cell) != "parallelogram"
-    except Exception:  # pragma: no cover - defensive
-        return True
-
-
-def _children_in_lockstep(
-    cell: str, u0: float, v0: float, side: float, level: int
-) -> list[tuple[str, float, float, float, int]]:
-    """Every child of a node, as index and as square, paired by position."""
-    step = level + 1
-    divisor = itacart.linear_refinement_ratio(step)
-    child = side / divisor
-    return [
-        (
-            hierarchy._descend(cell, geometry._child_code(row, column, step)),
-            u0 + column * child,
-            v0 + row * child,
-            child,
-            step,
-        )
-        for row in range(divisor)
-        for column in range(divisor)
-    ]
 
 
 def test_the_geometric_screen_never_admits_an_anomalous_cell() -> None:
@@ -2373,57 +2384,206 @@ def test_the_screen_agrees_all_the_way_down_the_frontier() -> None:
     assert (checked, skipped) == (1740, 2)
 
 
-def test_a_geometry_touching_an_extension_zone_is_not_lifted() -> None:
-    """Touching the zone is not entering it.
+def test_the_two_remaining_families_are_refused_when_actually_touched() -> None:
+    """Narrowing the radius must not narrow the refusal itself.
 
-    A polygon whose edge lies exactly on a zone window leaves a
-    zero-width piece inside it, and lifting that piece would move a line
-    the geometry only borders past the antemeridian while the body of it
-    stayed behind. Read on both zones and on both edges the geometry can
-    meet -- the longitude limit and the poleward end of the row band --
-    because the two are cut by different kinds of line.
+    Two families, not three. The prime-meridian column left the screen
+    when it gained a descent of its own, and a parcel sitting on the
+    line is now filled; the last lattice column and the polar row are
+    refused exactly as before, in all four quadrants.
+
+    Read at resolution 7, where the old version read at 13. The old one
+    could afford 13 because the screen refused before counting anything;
+    now the parcel is actually filled, and at a one-centimetre cell a
+    sixty-metre parcel is thirty-six million of them.
     """
-    for window in geometry._extension_windows():
-        west, south, east, north = window.bounds
-        beyond_the_limit = Polygon(
-            [
-                (east, south + 0.5),
-                (east + 0.5, south + 0.5),
-                (east + 0.5, north - 0.5),
-                (east, north - 0.5),
-            ]
-        )
-        beyond_the_band = Polygon(
-            [
-                (west + 0.5, north),
-                (east - 0.5, north),
-                (east - 0.5, north + 0.5),
-                (west + 0.5, north + 0.5),
-            ]
-        )
-        for outside in (beyond_the_limit, beyond_the_band):
-            assert geometry._lift_extensions(outside).equals(outside)
-
-
-def test_the_meridian_walk_stops_below_the_polar_row() -> None:
-    """The seam walk observes the polar refusal the screen states.
-
-    Column zero left the screen, so nothing else would stop the walk
-    from offering the polar row and the rows past it, where the cell is
-    cut by the pole and carries a fraction of the nominal area. It stops
-    on its own, and the public call still refuses, because the ordinary
-    columns of that row reach the screen first.
-    """
-    region = Polygon([(-0.2, 89.0), (0.2, 89.0), (0.2, 90.0), (-0.2, 90.0)])
-    plane, _views = geometry._prepare(region, 1, densify=True)
-    rows = geometry._meridian_rows(plane)
-    assert rows
+    on_the_line = itacart.decompose(itacart.polyfill(_parcel_east_of_greenwich(0.0), 7))
+    assert on_the_line
+    assert all(itacart.is_valid_cell(cell) for cell in on_the_line)
     side = itacart.cell_size(1)
-    last = max(row for _hemisphere, row in rows)
-    assert itacart.last_lattice_column("NE", last + 1, side) > 0
-    assert itacart.last_lattice_column("NE", last + 2, side) <= 0
-    with pytest.raises(DomainError, match="polar row"):
-        itacart.polyfill(region, 1)
+    for quadrant in QUADRANTS:
+        polar = max(
+            row
+            for row in range(700, 1000)
+            if itacart.last_lattice_column(quadrant, row, side) > 0
+        )
+        for column, row in (
+            (itacart.last_lattice_column(quadrant, 100, side), 100),
+            (1, polar),
+        ):
+            with pytest.raises((NonExistentCellError, DomainError)):
+                geometry._check_addressable(quadrant, column, row)
+
+
+def _screen_refuses(quadrant: str, u0: float, v0: float, side: float) -> bool:
+    """The geometric screen, expressed only on the node's own coordinates.
+
+    The lattice column of a node of side ``s`` at ``(u0, v0)`` is
+    ``(u0 - v0) / s``, which reduces to ``u_index - row`` at resolution
+    1. Nothing here names a cell, which is the point: the fill may not
+    reach an index-rendering door, so it cannot ask ``absorbs_border``.
+    """
+    column = round((u0 - v0) / side)
+    row = round(v0 / side)
+    last_here = itacart.last_lattice_column(quadrant, row, side)
+    beyond = itacart.last_lattice_column(quadrant, row + 1, side)
+    return column <= 0 or last_here <= 0 or beyond <= 0 or column >= last_here
+
+
+def _is_anomalous(cell: str) -> bool:
+    """The index-side truth the screen has to agree with."""
+    try:
+        if itacart.absorbs_border(cell):
+            return True
+        return itacart.cell_shape(cell) != "parallelogram"
+    except Exception:  # pragma: no cover - defensive
+        return True
+
+
+def _children_in_lockstep(
+    cell: str, u0: float, v0: float, side: float, level: int
+) -> list[tuple[str, float, float, float, int]]:
+    """Every child of a node, as index and as square, paired by position."""
+    step = level + 1
+    divisor = itacart.linear_refinement_ratio(step)
+    child = side / divisor
+    return [
+        (
+            hierarchy._descend(cell, geometry._child_code(row, column, step)),
+            u0 + column * child,
+            v0 + row * child,
+            child,
+            step,
+        )
+        for row in range(divisor)
+        for column in range(divisor)
+    ]
+
+
+def test_what_is_filled_beside_the_meridian_is_ordinary_and_nominal() -> None:
+    """The cells the narrower screen lets through are real cells.
+
+    Inside an anomalous base cell the index descent and the square
+    descent are not the same tree, so admitting geometry there is only
+    safe if the indices the fill emits name the squares it accepted.
+    Measured on the round trip rather than assumed.
+    """
+    parcel = _parcel_east_of_greenwich(0.001)
+    cells = itacart.decompose(itacart.polyfill(parcel, 7))
+    assert cells
+    nominal = itacart.nominal_cell_area(7)
+    for cell in cells:
+        assert itacart.is_valid_index(cell), cell
+        assert not itacart.absorbs_border(cell), cell
+        assert itacart.cell_shape(cell) == "parallelogram", cell
+        area = Polygon(boundary.plane_ring(cell)[1]).area
+        assert area == pytest.approx(nominal, rel=1e-9), cell
+        assert itacart.cell_to_polygon(cell).intersects(parcel), cell
+
+
+# --------------------------------------------------------------------------
+# The grid's own geometry as the query
+# --------------------------------------------------------------------------
+
+
+def _prepared_from_the_grid(cell: str):
+    """Plane geometry and lattice views built from the cell itself.
+
+    The fill takes a geodetic polygon, so every measurement of it has to
+    hand it one. Building that polygon with ``cell_to_boundary`` sends
+    the cell out through longitude and back, and the trip does not
+    return the cell: an edge of an ITACaRT cell is a straight line in
+    the sinusoidal plane, and densifying it as a geodesic on the
+    ellipsoid rebuilds it as a different curve. Measured, the round trip
+    returns 99.9269 per cent of a border-absorbing cell, 50 per cent of
+    the southern cap and 33.1111 per cent of a cell in row 999.
+
+    So a test that wants to ask about the *descent* has to hand it the
+    figure the grid produces, not one that has been through longitude.
+    This builds exactly what ``_prepare`` builds -- projected plane,
+    then one sheared lattice view per quadrant -- from ``plane_ring``.
+    """
+    plane = Polygon(boundary.plane_ring(cell)[1])
+    views = [
+        (quadrant, geometry._LatticeView(geometry._to_lattice(piece, quadrant)))
+        for quadrant, piece in geometry._quadrant_pieces(plane)
+    ]
+    return plane, views
+
+
+def _real_family(cell: str, resolution: int) -> set[str]:
+    """Every descendant of ``cell`` at ``resolution``, from the hierarchy."""
+    family = {cell}
+    for _level in range(resolution - itacart.get_resolution(cell)):
+        family = {child for node in family for child in hierarchy._children_of(node)}
+    return family
+
+
+def test_the_meridian_walk_offers_the_polar_row_in_both_hemispheres() -> None:
+    """The cap is column zero, and only this walk can reach it.
+
+    ``_base_cells`` skips column zero deliberately, because that column
+    names the meridian triangle this walk exists to descend. So if the
+    walk does not offer the polar row, nothing offers the cap and the
+    fill returns empty without refusing anything.
+
+    The row is decided by the pole. It used to be decided by a pair of
+    ``last_lattice_column(...) <= 0`` tests, one on the row and one on
+    the row above, and that answer saturates: zero means one cell in an
+    eastern quadrant and none in a western one, and it is zero for both
+    row 1000 and row 1001. The pair skipped row 999 on one test and row
+    1000 on the other, so the walk stopped two rows short.
+    """
+    polar = int(math.floor(MERIDIAN_QUADRANT / itacart.cell_size(1)))
+
+    for hemisphere, cap in (("N", "NE(0000/1000)"), ("S", "SE(0000/1000)")):
+        plane, _views = _prepared_from_the_grid(cap)
+        rows = geometry._meridian_rows(plane)
+        assert (hemisphere, polar) in rows, (cap, rows)
+        assert all(row <= polar for _hemisphere, row in rows), rows
+
+
+@pytest.mark.parametrize(
+    ("cell", "label"),
+    [
+        ("NE(0000/1000)", "northern cap"),
+        ("SE(0000/1000)", "southern cap"),
+        ("NE(0001/0999)", "row below the pole"),
+        ("NE(1414/0500)", "border-absorbing, lateral"),
+        ("NE(0500/0300)", "interior"),
+    ],
+)
+@pytest.mark.parametrize("resolution", [2, 3])
+def test_the_descent_recovers_the_real_tree_from_the_grids_own_geometry(
+    monkeypatch: pytest.MonkeyPatch, cell: str, label: str, resolution: int
+) -> None:
+    """Asked about the cell itself, the fill answers with the cell's children.
+
+    Set against set, not cardinality against cardinality: a walk that
+    named the right number of the wrong cells would pass a count and
+    fail here, and one did -- before the polar row was routed to the
+    proved tree, the uniform meridian walk named two spellings
+    ``is_valid_cell`` rejects and missed two it should have named.
+
+    ``count_internal_cells`` is asserted alongside, because the two
+    reach the same answer by different code and a disagreement between
+    them is a defect in whichever is wrong.
+    """
+    monkeypatch.setattr(
+        geometry,
+        "_prepare",
+        lambda _geometry, _resolution, densify=True: _prepared_from_the_grid(cell),
+    )
+    ignored = Polygon([(0.0, 0.0), (0.1, 0.0), (0.1, 0.1)])
+
+    filled = set(
+        itacart.decompose(itacart.polyfill(ignored, resolution, compact=False))
+    )
+    counted = itacart.count_internal_cells(ignored, resolution)
+
+    assert filled == _real_family(cell, resolution), label
+    assert counted == len(filled), label
+    assert all(itacart.is_valid_cell(spelling) for spelling in filled), label
 
 
 def test_the_band_of_a_polar_base_cell_is_the_whole_cell() -> None:

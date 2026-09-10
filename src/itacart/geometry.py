@@ -53,17 +53,15 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from typing import TYPE_CHECKING, Callable, Final, Literal, Sequence, TypeVar
 
-from .boundary import crosses_antemeridian, last_lattice_column
+from .boundary import _CLIP_EPSILON_M, crosses_antemeridian, last_lattice_column
 from .cells import _ROW_LETTERS, cell_to_anchor, geo_to_cell
 from .constants import (
     DESCENT_CLOSE,
     DESCENT_OPEN,
     MAX_RESOLUTION,
-    QUADRANTS,
-    RES1_DIGITS,
-    RES1_SEPARATOR,
-    SIBLING_SEPARATOR,
 )
+from .constants import MERIDIAN_QUADRANT as _MERIDIAN_QUADRANT
+from .constants import QUADRANTS, RES1_DIGITS, RES1_SEPARATOR, SIBLING_SEPARATOR
 from .exceptions import (
     AntemeridianError,
     DensificationError,
@@ -265,6 +263,95 @@ def _lift_extensions(geometry: "BaseGeometry") -> "BaseGeometry":
     return united
 
 
+def _closes_at_a_pole(geometry: "BaseGeometry") -> bool:
+    """Does this figure reach a pole, and so close around it?
+
+    The distinction the antemeridian screen needs, and the smallest one
+    that separates the two figures it was conflating.
+
+    The polar cap runs from -180 to 180 because a cap has to: its two
+    meridian edges are the *same* edge, and they meet at the pole, which
+    is one point rather than a seam. An ordinary crossing has its two
+    sides of the line at the same latitude, never meeting, and splitting
+    it at 180 is exactly the right advice.
+
+    Reaching the pole is what tells them apart, and it is a property of
+    the figure rather than of its longitude span, so a caller cannot
+    dress a crossing up as a cap by widening it.
+    """
+    from .constants import WGS84_A
+
+    _, min_lat, _, max_lat = geometry.bounds
+    slack = math.degrees(_CLIP_EPSILON_M / WGS84_A)
+    return bool(max_lat >= 90.0 - slack or min_lat <= -90.0 + slack)
+
+
+def _refuse_unzoned_extension(geometry: "BaseGeometry") -> None:
+    """Refuse longitude past the line that no extension zone legitimises.
+
+    The domain stops at 180 degrees except where a zone carries it
+    further, and only in the rows that zone is realized on. A footprint
+    written past the line anywhere else names ground the grid does not
+    address, and it is refused here, by the antemeridian's own name.
+
+    It used to be refused by accident. Such a footprint projects into
+    the western quadrant at a column past the end of its row, which is
+    the last lattice column, and the fill refused that column outright
+    -- so the guarantee about the line was resting on a limitation about
+    absorbing cells. When the fill learned to descend that column the
+    guarantee went with it. This is the rule standing on its own.
+
+    The legitimate region is the lifted window itself, so the two cannot
+    drift: :func:`_lift_extensions` moves a zone's ground east by a full
+    turn, and what is allowed past the line is exactly where that lands.
+    """
+    from shapely.affinity import translate
+    from shapely.geometry import box
+    from shapely.ops import unary_union
+
+    from .constants import ANTEMERIDIAN_LON, WGS84_A
+
+    # A cell of the last column at the equator has its border *on* the
+    # line, and the round trip through the projection puts its far
+    # vertex 2.8e-14 degrees past it. That is arithmetic noise, not a
+    # footprint reaching past the domain, so the line is given the
+    # width the boundary module already clips with -- 1e-6 metres, or
+    # 9e-12 degrees at the equator, three orders above the noise -- and
+    # no new threshold is chosen here.
+    slack = math.degrees(_CLIP_EPSILON_M / WGS84_A)
+    edge = ANTEMERIDIAN_LON + slack
+    min_lon, _, max_lon, _ = geometry.bounds
+    if min_lon >= -edge and max_lon <= edge:
+        return
+    inside_the_line = box(-edge, -90.0, edge, 90.0)
+    past = geometry.difference(inside_the_line)
+    if past.is_empty:
+        return
+    allowed = unary_union(
+        [
+            translate(window, xoff=2.0 * ANTEMERIDIAN_LON)
+            for window in _extension_windows()
+        ]
+    )
+    # The window's edges are the zone's own row boundaries, and a cell of
+    # the first or last row of a zone lands on one of them, so the same
+    # projection noise puts a hair of it outside. The allowance carries
+    # the same slack the line does, for the same reason.
+    stray = past.difference(allowed.buffer(slack))
+
+    if stray.is_empty:
+        return
+    if geometry.geom_type in {"Polygon", "MultiPolygon"} and (
+        stray.geom_type in _NON_AREAL
+    ):
+        return  # touching the far edge of a zone, not reaching past it
+    raise AntemeridianError(
+        "geometry reaches past 180 degrees longitude where no extension "
+        "zone carries the domain; only the Fiji and Chukotka rows are "
+        "addressable past the line, and only as far as each one reaches"
+    )
+
+
 def _check_resolution(resolution: int) -> None:
     """Reject a resolution outside 1..13."""
     if not isinstance(resolution, int) or isinstance(resolution, bool):
@@ -426,6 +513,29 @@ def _to_lattice(piece: "BaseGeometry", quadrant: str) -> "BaseGeometry":
     return affine_transform(piece, [a, b, d, e, 0.0, 0.0])
 
 
+#: The one row the pole falls inside. Rows are ``_L1`` tall from the
+#: equator, so the pole at ``MERIDIAN_QUADRANT`` lands in this one and in
+#: no other.
+#:
+#: It used to be derived, as "the row above addresses no cell", read off
+#: ``last_lattice_column`` answering zero or less. That answer saturates:
+#: it is zero for row 1000 and zero again for row 1001, and zero means
+#: one cell in an eastern quadrant and none in a western one. So row 999
+#: was called polar in all four quadrants, and its cells -- valid,
+#: well-formed, six real children each, their highest point 1 966 metres
+#: below the pole -- were refused for a property they do not have.
+_POLAR_ROW: Final[int] = int(math.floor(_MERIDIAN_QUADRANT / _L1))
+
+
+def _first_lattice_column(quadrant: str) -> int:
+    """The lowest column index a quadrant addresses.
+
+    Column zero is the meridian column and the meridian belongs to the
+    east, so the western quadrants start at one.
+    """
+    return 0 if quadrant[1] == "E" else 1
+
+
 def _check_addressable(quadrant: str, column: int, row: int) -> None:
     """Refuse a resolution-1 cell that is not an ordinary parallelogram.
 
@@ -457,13 +567,18 @@ def _check_addressable(quadrant: str, column: int, row: int) -> None:
     the polar branch would never be reached at all. Measured: the branch
     was unreachable until the two were swapped.
     """
+    if row > _POLAR_ROW:
+        raise DomainError(
+            f"row {row} of quadrant {quadrant} addresses no cell: it lies "
+            "beyond the pole"
+        )
     last = last_lattice_column(quadrant, row, _L1)
-    if last <= 0:
+    if last < _first_lattice_column(quadrant):
         raise DomainError(
             f"row {row} of quadrant {quadrant} addresses no cell: its "
             "parallel circle is shorter than one cell side"
         )
-    if last_lattice_column(quadrant, row + 1, _L1) <= 0:
+    if row == _POLAR_ROW:
         raise DomainError(
             f"row {row} of quadrant {quadrant} is the polar row, which is "
             "clipped by the pole and does not carry the nominal cell area"
@@ -568,7 +683,7 @@ def _base_cells(
     lattice: "BaseGeometry",
     quadrant: str,
     resolution: int,
-) -> list[tuple[int, int]]:
+) -> list[tuple[int, int, bool]]:
     """Resolution-1 ``(column, row)`` pairs whose square meets ``lattice``.
 
     Candidates come from the bounding box, but only those a square
@@ -596,7 +711,7 @@ def _base_cells(
     row_hi = int(math.floor(max_v / _L1))
     u_lo = int(math.floor(min_u / _L1))
     u_hi = int(math.floor(max_u / _L1))
-    out: list[tuple[int, int]] = []
+    out: list[tuple[int, int, bool]] = []
     for row in range(row_lo, row_hi + 1):
         for u_index in range(u_lo, u_hi + 1):
             u0 = u_index * _L1
@@ -611,15 +726,35 @@ def _base_cells(
                 # no cell. Column 0 names the meridian triangle, which
                 # _fill_meridian_node walks in the plane rather than here.
                 continue
+            # A candidate position past the end of its row names no
+            # cell. The enumeration produces such positions because it
+            # walks a bounding box in lattice coordinates, which does not
+            # know where each row stops, and they were reaching
+            # ``_check_addressable`` and drawing that row's diagnosis --
+            # so a valid cell of row 998 was cancelled by a position of
+            # row 999 that is outside the grid. Dropping them is not a
+            # weakening of the screen: there is nothing there to fill.
+            reach = last_lattice_column(quadrant, row, _L1)
+            if column > reach or reach < _first_lattice_column(quadrant):
+                continue
             try:
                 _check_addressable(quadrant, column, row)
-            except (DomainError, NonExistentCellError):
+            except (DomainError, NonExistentCellError) as exc:
                 band = _anomalous_band(quadrant, column, row, cell_size(resolution))
                 if band.is_empty or not prepared.intersects(band):
-                    out.append((column, row))
+                    out.append((column, row, False))
+                    continue
+                # The last lattice column is walked rather than refused:
+                # it absorbs the strip between its square and the domain
+                # border, and _fill_border_node descends the tree the
+                # hierarchy proved for it. The polar row still raises --
+                # it is refused earlier, by the antemeridian screen, and
+                # is a separate delivery.
+                if isinstance(exc, NonExistentCellError):
+                    out.append((column, row, True))
                     continue
                 raise
-            out.append((column, row))
+            out.append((column, row, False))
     return out
 
 
@@ -824,6 +959,322 @@ def _folds_into_its_parent(parts: list[str], divisor: int) -> bool:
     return len(parts) == divisor * divisor and not any(
         DESCENT_OPEN in part for part in parts
     )
+
+
+# --------------------------------------------------------------------------
+# The border-absorbing family
+# --------------------------------------------------------------------------
+
+
+class _BorderWalk:
+    """One fill's view of the absorbing family: the tree, cached once.
+
+    The ordinary descent subdivides a sheared square into ``d x d``
+    smaller ones and tests each. Neither half of that holds here: the
+    cell is not the square, and the family runs two to seven children.
+    So this walk borrows nothing from it -- no leaf count in closed
+    form, no shared expansion string, no fold on ``d * d`` parts.
+
+    ``hierarchy._border_children_of`` carries a bounded cache and one
+    resolution-1 absorbing cell holds twenty thousand nodes by
+    resolution 5, so a counting pass would evict what the fill is about
+    to ask for and the tree would be paid for twice. This holds it for
+    the length of one call and both passes read it.
+    """
+
+    __slots__ = ("_children", "_rings", "quadrant", "sheared")
+
+    def __init__(self, quadrant: str, sheared: bool = True) -> None:
+        self.quadrant = quadrant
+        self.sheared = sheared
+        self._children: dict[str, tuple[str, ...]] = {}
+        self._rings: dict[str, "BaseGeometry | None"] = {}
+
+    def children(self, cell: str) -> tuple[str, ...]:
+        """The proved children of ``cell``, in canonical order."""
+        from . import hierarchy
+
+        got = self._children.get(cell)
+        if got is None:
+            got = tuple(hierarchy._children_of(cell))
+            self._children[cell] = got
+        return got
+
+    def ring(self, cell: str) -> "BaseGeometry | None":
+        """The cell's effective ring, sheared onto the lattice.
+
+        :func:`~itacart.boundary.plane_ring` is the authority for
+        effective -- it answers after the pole and after absorption --
+        and the descent works sheared, so the ring is carried across
+        with the matrix the query already went through. ``None`` when
+        the cell names no surface.
+        """
+        if cell in self._rings:
+            return self._rings[cell]
+        from shapely.geometry import Polygon
+
+        from .boundary import plane_ring
+
+        _, ring = plane_ring(cell)
+        if not self.sheared:
+            # The meridian family straddles the line, so it lives in the
+            # unsplit plane and the query was never sheared. Carrying the
+            # ring across anyway would put the two in different frames.
+            unsheared = Polygon(ring) if len(ring) >= 3 else None
+            self._rings[cell] = unsheared
+            return unsheared
+        a, b, d, e = _QUADRANT_SHEAR[self.quadrant]
+        shape: "BaseGeometry | None" = (
+            Polygon([(a * x + b * y, d * x + e * y) for x, y in ring])
+            if len(ring) >= 3
+            else None
+        )
+        self._rings[cell] = shape
+        return shape
+
+    def square(self, cell: str, level: int) -> tuple[float, float, float]:
+        """Lattice anchor and side of a cell that does not absorb.
+
+        A cell outside the family is the sheared square the ordinary
+        descent tests, so the moment a branch leaves the family it goes
+        back to the closed-form walk. The anchor is read from the ring
+        so the two frames cannot drift; the side comes from the
+        resolution table so it cannot pick up rounding from bounds.
+        """
+        shape = self.ring(cell)
+        assert shape is not None
+        u0, v0 = shape.bounds[0], shape.bounds[1]
+        return u0, v0, cell_size(level)
+
+
+def _accept_border_leaf(
+    prepared: "PreparedGeometry", containment: Containment, shape: "BaseGeometry"
+) -> bool:
+    """Whether an absorbing target-resolution cell is kept.
+
+    Called once the cell is known to meet the query, by the cell's
+    effective geometry rather than by a lattice square it is not.
+
+    The three modes are asked independently, unlike :func:`_accept_leaf`,
+    which infers two of them from the square's containment chain. That
+    chain holds because a square's descendants are subsets of it. Here
+    they are not: a child of an absorbing cell reaches past its parent
+    by up to 2.411 per cent of its own area under the chord
+    representation, so nothing may be inferred from the parent.
+    """
+    if containment == "intersects":
+        return True
+    if containment == "contains":
+        return bool(prepared.contains(shape))
+    return bool(prepared.contains(shape.centroid))
+
+
+def _count_border_node(
+    prepared: "PreparedGeometry",
+    walk: _BorderWalk,
+    cell: str,
+    level: int,
+    target: int,
+    containment: Containment,
+    remaining: int,
+) -> int:
+    """Count the target cells under one absorbing node, exactly.
+
+    Exact rather than bounded, because no power of a bound describes
+    this family. Measured over 572 resolution-1 parents, the real tree
+    at resolution 5 runs from 749 nodes to 20 539 against a uniform
+    10 000: a seven-to-the-depth ceiling refuses fills that fit, and a
+    ``d`` -to-the-depth one accepts fills that cannot be materialised.
+
+    ``remaining`` is what the budget has left. The walk stops as soon as
+    the running total passes it, so an oversized fill is refused without
+    walking the rest of the tree. The point of the pre-count is to keep
+    the output under the ceiling, not to keep the walk constant-time --
+    that was only ever possible because the uniform tree had a formula.
+    """
+    from .boundary import absorbs_border
+
+    shape = walk.ring(cell)
+    if shape is None or not prepared.intersects(shape):
+        return 0
+    if level == target:
+        return 1 if _accept_border_leaf(prepared, containment, shape) else 0
+    total = 0
+    for child in walk.children(cell):
+        if absorbs_border(child) or not walk.sheared:
+            # Unsheared, the closed-form walk has no square to test: a
+            # cell of the meridian family is a parallelogram or a triangle
+            # in the plane, not an axis-aligned box. Every node is asked
+            # about its own ring instead. The subtree is small -- 1 194
+            # nodes under the cap at resolution 5 -- so that is affordable.
+            total += _count_border_node(
+                prepared,
+                walk,
+                child,
+                level + 1,
+                target,
+                containment,
+                remaining - total,
+            )
+        else:
+            u0, v0, side = walk.square(child, level + 1)
+            total += _count_node(prepared, u0, v0, side, level + 1, target, containment)
+        if total > remaining:
+            return total
+    return total
+
+
+def _fill_border_node(
+    prepared: "PreparedGeometry",
+    walk: _BorderWalk,
+    cell: str,
+    level: int,
+    target: int,
+    containment: Containment,
+) -> list[str]:
+    """Every target-resolution cell the query keeps under one absorbing node.
+
+    Atomic spellings rather than an index fragment. Of the 2 426
+    resolution-2 children of the 572 lateral parents, 453 are spelled
+    under a stem one or two columns east of their parent's, and that
+    stem names no resolution-1 cell of its own. A fragment of the form
+    ``code(children)`` cannot hold them, so the cells are returned and
+    the composition is left to the caller, where the roots are grouped.
+
+    There is no wholly-inside shortcut, for the reason
+    :func:`_accept_border_leaf` gives: containing the parent says
+    nothing about the children in this family.
+    """
+    from .boundary import absorbs_border
+
+    shape = walk.ring(cell)
+    if shape is None or not prepared.intersects(shape):
+        return []
+    if level == target:
+        return [cell] if _accept_border_leaf(prepared, containment, shape) else []
+    kept: list[str] = []
+    for child in walk.children(cell):
+        if absorbs_border(child) or not walk.sheared:
+            kept.extend(
+                _fill_border_node(prepared, walk, child, level + 1, target, containment)
+            )
+        else:
+            u0, v0, side = walk.square(child, level + 1)
+            kept.extend(
+                _fill_ordinary_atoms(
+                    prepared, u0, v0, side, level + 1, target, containment, child
+                )
+            )
+    return kept
+
+
+def _fill_border_root(
+    prepared: "PreparedGeometry",
+    quadrant: str,
+    column: int,
+    row: int,
+    target: int,
+    containment: Containment,
+    compact: bool,
+    budget: _Budget,
+    sheared: bool = True,
+) -> str | None:
+    """Fill one resolution-1 absorbing cell and spell what it keeps.
+
+    The pre-count runs first and is charged against what the budget has
+    left, so an oversized fill is refused before any cell is named. Both
+    passes read one ``_BorderWalk``, so the tree is derived once.
+
+    The fragment is built from the atoms rather than during the descent,
+    because 453 of the 2 426 resolution-2 children of the lateral family
+    are spelled under a stem one or two columns east of their parent's.
+    Those roots name no resolution-1 cell of their own -- they are past
+    the last lattice column -- so they never collide with a base cell,
+    and :func:`~itacart.index.compose` groups them.
+    """
+    from .index import compose
+
+    if compact:
+        raise GeometryError(
+            "compact=True is not available over the border-absorbing "
+            "family yet; the fold rule reads a uniform tree and this "
+            "family does not have one. Pass compact=False"
+        )
+    walk = _BorderWalk(quadrant, sheared=sheared)
+    root = (
+        f"{quadrant}{DESCENT_OPEN}{column:0{RES1_DIGITS}d}"
+        f"{RES1_SEPARATOR}{row:0{RES1_DIGITS}d}{DESCENT_CLOSE}"
+    )
+    remaining = MAX_FILL_CELLS - budget.spent
+    budget.charge(
+        _count_border_node(prepared, walk, root, 1, target, containment, remaining)
+    )
+    kept = _fill_border_node(prepared, walk, root, 1, target, containment)
+    if not kept:
+        return None
+    composed = compose(kept)
+    return composed[len(quadrant) + 1 : -1]
+
+
+def _fill_ordinary_atoms(
+    prepared: "PreparedGeometry",
+    u0: float,
+    v0: float,
+    side: float,
+    level: int,
+    target: int,
+    containment: Containment,
+    cell: str,
+) -> list[str]:
+    """The closed-form descent, resumed once a branch leaves the family.
+
+    Spelled as atoms rather than as a fragment because the caller is
+    collecting cells across roots that do not share a stem. The walk
+    itself is the ordinary one: a square, its ``d x d`` children, and
+    the wholly-inside shortcut, which is sound again here because a
+    square's descendants are subsets of it.
+    """
+    from shapely.geometry import box
+
+    square = box(u0, v0, u0 + side, v0 + side)
+    if not prepared.intersects(square):
+        return []
+    if level == target:
+        if prepared.contains(square) or _accept_leaf(
+            prepared, containment, u0, v0, side
+        ):
+            return [cell]
+        return []
+    step = level + 1
+    divisor = linear_refinement_ratio(step)
+    child = side / divisor
+    out: list[str] = []
+    for row in range(divisor):
+        for column in range(divisor):
+            out.extend(
+                _fill_ordinary_atoms(
+                    prepared,
+                    u0 + column * child,
+                    v0 + row * child,
+                    child,
+                    step,
+                    target,
+                    containment,
+                    _descend_spelling(cell, _child_code(row, column, step)),
+                )
+            )
+    return out
+
+
+def _descend_spelling(cell: str, code: str) -> str:
+    """``cell`` with one more refinement level appended, as an atom.
+
+    A level goes *inside* the closing brackets, not beside them: a child
+    of ``NE(1414/0500(1))`` is ``NE(1414/0500(1(A1)))``, while
+    ``NE(1414/0500(1)(A1))`` is a sibling pair naming two cells.
+    """
+    depth = len(cell) - len(cell.rstrip(DESCENT_CLOSE))
+    return f"{cell[:-depth]}{DESCENT_OPEN}{code}{DESCENT_CLOSE * (depth + 1)}"
 
 
 def _meridian_triangle(base: float, y_sign: float, side: float) -> "BaseGeometry":
@@ -1045,10 +1496,20 @@ def _meridian_rows(plane: "BaseGeometry") -> list[tuple[str, int]]:
     whether the triangle is actually met. The strip is clipped first so
     that a geometry nowhere near the line offers nothing at all.
 
-    The polar row is left out for the reason
-    :func:`_check_addressable` refuses it elsewhere -- it is cut by the
-    pole and does not carry the nominal area -- and so is any row past
-    the last one that addresses a cell.
+    A row past the pole is left out, and so is one that addresses no
+    column in its own quadrant. The polar row is offered: ``_base_cells``
+    skips column zero on purpose, because that column names the meridian
+    triangle this walk is here to reach, and the cap is column zero of
+    its row -- so if this walk does not offer it, nothing does.
+
+    The two clauses used to be a pair of ``last_lattice_column(...) <= 0``
+    tests, one on the row and one on the row above. That answer
+    saturates: it is zero for row 1000, which holds one cell in an
+    eastern quadrant, and zero again for row 1001, which holds none. The
+    pair skipped row 999 on the second test and row 1000 on the first,
+    so the walk stopped two rows below the pole and the cap was never
+    offered to anything. The prepared geometry was never the problem: it
+    coincides with ``plane_ring`` to the digit.
     """
     from shapely.geometry import box
 
@@ -1072,9 +1533,11 @@ def _meridian_rows(plane: "BaseGeometry") -> list[tuple[str, int]]:
             max(int(math.floor(first / _L1)), 0), int(math.floor(last / _L1)) + 1
         ):
             quadrant = hemisphere + "E"
-            if last_lattice_column(quadrant, row, _L1) <= 0:
+            if row > _POLAR_ROW:
                 continue
-            if last_lattice_column(quadrant, row + 1, _L1) <= 0:
+            if last_lattice_column(quadrant, row, _L1) < _first_lattice_column(
+                quadrant
+            ):
                 continue
             out.append((hemisphere, row))
     return out
@@ -1087,6 +1550,7 @@ def _count_node(
     side: float,
     level: int,
     target: int,
+    containment: Containment = "center",
 ) -> int:
     """Accumulate the cell count under one node without naming any cell.
 
@@ -1101,7 +1565,7 @@ def _count_node(
     cell, which is what lets the count run at resolution 13 where naming
     the cells could not.
     """
-    from shapely.geometry import Point, box
+    from shapely.geometry import box
 
     square = box(u0, v0, u0 + side, v0 + side)
     if not prepared.intersects(square):
@@ -1109,8 +1573,7 @@ def _count_node(
     if prepared.contains(square):
         return _leaves_between(level, target)
     if level == target:
-        centre = Point(u0 + side / 2.0, v0 + side / 2.0)
-        return 1 if prepared.contains(centre) else 0
+        return 1 if _accept_leaf(prepared, containment, u0, v0, side) else 0
     step = level + 1
     divisor = linear_refinement_ratio(step)
     child = side / divisor
@@ -1124,6 +1587,7 @@ def _count_node(
                 child,
                 step,
                 target,
+                containment,
             )
     return total
 
@@ -1142,12 +1606,19 @@ def _prepare(
 
     if geometry.is_empty:
         return geometry, []
-    if crosses_antemeridian(geometry):
+    if crosses_antemeridian(geometry) and not _closes_at_a_pole(geometry):
         raise AntemeridianError(
             "geometry crosses 180 degrees longitude outside an extension "
             "zone; split it at the antemeridian or express it with "
             "longitudes past 180 inside a defined zone"
         )
+    # Judged on what the caller supplied, before densification. A
+    # parallel is not a geodesic, so densifying the northern edge of a
+    # cell in the last row of a zone bulges it four metres past the
+    # zone's own latitude band -- measured, 0.000036 degrees at NE row
+    # 799. Refusing on that would refuse a footprint the caller wrote
+    # inside the zone, for something this package did to it afterwards.
+    _refuse_unzoned_extension(geometry)
     if densify and geometry.geom_type in {"Polygon", "MultiPolygon"}:
         geometry = _densify_any(geometry, _auto_segment(resolution))
     geometry = _lift_extensions(geometry)
@@ -1308,9 +1779,24 @@ def polyfill(
     ordered: dict[str, list[str]] = {}
     for quadrant, view in views:
 
-        def _one(base: tuple[int, int], _v: "_LatticeView" = view) -> str | None:
-            column, row = base
+        def _one(
+            base: tuple[int, int, bool],
+            _v: "_LatticeView" = view,
+            _q: str = quadrant,
+        ) -> str | None:
+            column, row, border = base
             code = f"{column:0{RES1_DIGITS}d}{RES1_SEPARATOR}{row:0{RES1_DIGITS}d}"
+            if border:
+                return _fill_border_root(
+                    _v.prepared,
+                    _q,
+                    column,
+                    row,
+                    resolution,
+                    containment,
+                    compact,
+                    budget,
+                )
             return _fill_node(
                 _v.prepared,
                 (column + row) * _L1,
@@ -1345,6 +1831,26 @@ def polyfill(
         seam: dict[str, list[str]] = {}
         for hemisphere, row in meridian:
             code = f"{0:0{RES1_DIGITS}d}{RES1_SEPARATOR}{row:0{RES1_DIGITS}d}"
+            if row == _POLAR_ROW:
+                # The cap absorbs the domain border, so the uniform walk
+                # below does not describe it: measured, that walk named
+                # two spellings ``is_valid_cell`` rejects and missed two
+                # it should have named. It is handed to the walker built
+                # for that family instead.
+                fragment = _fill_border_root(
+                    prepared_plane,
+                    hemisphere + "E",
+                    0,
+                    row,
+                    resolution,
+                    containment,
+                    compact,
+                    budget,
+                    sheared=False,
+                )
+                if fragment is not None:
+                    seam.setdefault(hemisphere + "E", []).append(fragment)
+                continue
             fragment = _fill_meridian_node(
                 prepared_plane,
                 lattices,
@@ -1453,8 +1959,25 @@ def count_internal_cells(polygon: "Polygon", resolution: int, n_jobs: int = 1) -
     lattices = dict(views)
     for quadrant, view in views:
 
-        def _one(base: tuple[int, int], _v: "_LatticeView" = view) -> int:
-            column, row = base
+        def _one(
+            base: tuple[int, int, bool],
+            _v: "_LatticeView" = view,
+            _q: str = quadrant,
+        ) -> int:
+            column, row, border = base
+            if border:
+                walk = _BorderWalk(_q)
+                root = f"{_q}{DESCENT_OPEN}{column:0{RES1_DIGITS}d}"
+                root += f"{RES1_SEPARATOR}{row:0{RES1_DIGITS}d}{DESCENT_CLOSE}"
+                return _count_border_node(
+                    _v.prepared,
+                    walk,
+                    root,
+                    1,
+                    resolution,
+                    "center",
+                    MAX_FILL_CELLS,
+                )
             return _count_node(
                 _v.prepared, (column + row) * _L1, row * _L1, _L1, 1, resolution
             )
@@ -1468,6 +1991,22 @@ def count_internal_cells(polygon: "Polygon", resolution: int, n_jobs: int = 1) -
 
         prepared_plane = prep(plane)
         for hemisphere, row in meridian:
+            if row == _POLAR_ROW:
+                walk = _BorderWalk(hemisphere + "E", sheared=False)
+                root = (
+                    f"{hemisphere}E{DESCENT_OPEN}{0:0{RES1_DIGITS}d}"
+                    f"{RES1_SEPARATOR}{row:0{RES1_DIGITS}d}{DESCENT_CLOSE}"
+                )
+                total += _count_border_node(
+                    prepared_plane,
+                    walk,
+                    root,
+                    1,
+                    resolution,
+                    "center",
+                    MAX_FILL_CELLS,
+                )
+                continue
             total += _count_meridian_node(
                 prepared_plane,
                 lattices,

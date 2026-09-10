@@ -921,18 +921,38 @@ def test_recovery_refuses_a_feature_that_carries_no_index() -> None:
     assert interop.recover_from_geojson({"type": "FeatureCollection"}) == []
 
 
-def test_the_filling_round_trip_is_exact_for_six_families_and_refused_for_three() -> (
-    None
-):
-    """The filling path is the lossy one, and here is where it loses.
+def test_the_geographic_round_trip_loses_the_row_below_the_pole() -> None:
+    """**This measures the round trip through longitude, not the fill.**
 
-    Six of the nine families come back as themselves when their exported
-    polygon is refilled at their own resolution, including resolution
-    thirteen. Three are refused, each by a different package exception,
-    and none of the three refusals is a property of the grid: they are
-    where ``polyfill`` currently stops. Naming them is the point, because
-    a phase that reads "lossy by construction" and nothing else cannot
-    tell an approximation from a refusal.
+    Read the name literally. Export a cell to GeoJSON and refill it, and
+    what is being asked about is the trip: the cell leaves the sinusoidal
+    plane, becomes longitude and latitude, and comes back in through the
+    path meant for a caller's polygon, where every edge is rebuilt as a
+    geodesic on the ellipsoid before the projection. An ITACaRT cell's
+    edge is a straight line in the plane, so the figure that returns is
+    not the figure that left.
+
+    A failure here is therefore **not** evidence that ``polyfill`` is
+    wrong, and reading it that way cost this project several sessions.
+    The descent is exercised against the grid's own geometry in
+    ``test_the_descent_recovers_the_real_tree_from_the_grids_own_geometry``,
+    where all five families -- both caps included -- come back exactly.
+
+    Measured, the trip returns 99.9269 per cent of a border-absorbing
+    cell, 50 per cent of the southern cap and 33.1111 per cent of a cell
+    in row 999. Eight families survive it anyway, which is what makes the
+    loss look like an exception rather than the rule it is: the error is
+    the same everywhere and only its size changes with latitude.
+
+    The southern cap is one of the eight. Its cell is the northern cap's
+    mirror and its round trip loses half the figure, but the half that
+    survives still covers the one child there is, so the trip comes back
+    exact. That is luck rather than correctness, and it is written down
+    here so a later reading does not take it for the latter.
+
+    The direction that would preserve the shape is the other one --
+    sample the straight edge in the plane, then invert the projection --
+    and it is an interoperability question rather than a fill one.
     """
     exact: list[str] = []
     refused: dict[str, str] = {}
@@ -950,15 +970,16 @@ def test_the_filling_round_trip_is_exact_for_six_families_and_refused_for_three(
         "interior",
         "interior at resolution 13",
         "meridian column",
+        "trapezoid",
         "equator, row zero",
+        "polar cap",
         "south",
         "west",
     ]
-    assert refused == {
-        "trapezoid": "NonExistentCellError",
-        "polar row": "DomainError",
-        "polar cap": "AntemeridianError",
-    }
+    # Not refused: reached the fill and covered nothing. The distinction
+    # matters, because a screen turning them away would be a limitation
+    # of the grid's addressing and this is a limitation of the trip.
+    assert refused == {"polar row": "GeometryError"}
 
 
 def test_the_filling_loss_is_measured_rather_than_asserted() -> None:

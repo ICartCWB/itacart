@@ -349,26 +349,26 @@ def test_a_region_inside_a_zone_is_filled_with_cells_that_exist() -> None:
 
 
 @pytest.mark.parametrize("longitude", (-178.0001, -177.9999))
-def test_a_position_at_a_zone_limit_is_refused_for_now(longitude: float) -> None:
+def test_a_position_at_a_zone_limit_is_named_by_the_fill(longitude: float) -> None:
     """The limit is the domain edge, and the cell there absorbs the border.
 
     Lifting a position at ``lon_limit`` puts it at the longitude bounding
     the eastern quadrant in those rows, so both sides of the limit sit in
     the last lattice column of their row. That column absorbs the strip
     between itself and the border and is not the sheared square the
-    descent tests, so the fill refuses it.
+    descent tests.
 
-    **This is a limitation of the fill, not of the grid.** The cell
-    exists: ``geo_to_cell`` names it, ``boundary`` builds its ring, and
-    the hierarchy addresses its children. The refusal stands only until
-    the fill can descend a trapezoid, and the test moves to an equality
-    against ``geo_to_cell`` when it can.
+    This is the equality the refusing version of this test said it would
+    become. The fill walks that column now, against the tree the
+    hierarchy proves for it, so the cell ``geo_to_cell`` names for the
+    position is among the cells the fill returns for a region around it.
     """
     step = 1e-7
     region = box(longitude - step, -20.0 - step, longitude + step, -20.0 + step)
-    assert itacart.is_valid_cell(itacart.geo_to_cell(longitude, -20.0, 1))
-    with pytest.raises(itacart.NonExistentCellError, match="last lattice column"):
-        itacart.polyfill(region, 1, containment="intersects")
+    named = itacart.geo_to_cell(longitude, -20.0, 1)
+    assert itacart.is_valid_cell(named)
+    covering = itacart.decompose(itacart.polyfill(region, 1, containment="intersects"))
+    assert named in covering, (longitude, covering)
 
 
 def test_a_zone_limit_is_the_domain_edge_of_its_rows() -> None:
@@ -378,8 +378,8 @@ def test_a_zone_limit_is_the_domain_edge_of_its_rows() -> None:
     which is exactly the longitude bounding the eastern quadrant in those
     rows -- the extension limit and the domain edge are one line. So the
     lifted part of a straddling region lands in the last lattice column,
-    which is a refused family for reasons that have nothing to do with
-    the zone, and the refusal names that family.
+    which is the border-absorbing family, and the fill descends it
+    against the tree the hierarchy proves rather than refusing it.
     """
     from itacart.boundary import ZONE_ROWS, _lon_limit
 
@@ -388,8 +388,11 @@ def test_a_zone_limit_is_the_domain_edge_of_its_rows() -> None:
         edge = _lon_limit(spec.quadrant, rows[0])
         assert edge == spec.lon_limit + 360.0, name
 
-    with pytest.raises(itacart.NonExistentCellError, match="last lattice column"):
+    straddling = itacart.decompose(
         itacart.polyfill(box(-178.4, -20.4, -177.6, -19.6), 1)
+    )
+    assert straddling
+    assert all(itacart.is_valid_cell(cell) for cell in straddling)
 
 
 def test_the_zone_window_follows_the_meridian_and_not_its_chord() -> None:

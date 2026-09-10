@@ -35,17 +35,20 @@ QUADRANTS = ("NE", "NW", "SE", "SW")
 #: Resolution 1 refines four-to-one. Any other count is the border.
 CANONICAL_RATIO = 4
 
-#: The three stable terms of the band's accounting.
+#: The whole refused band, in columns, over every row of every quadrant.
 #:
-#: The first is the sum of the derived widths over every row where the
-#: row above is shorter, which is integer arithmetic over the lattice and
-#: moves on no machine. The second is the corner-contact surplus, one
-#: column on each row whose neighbour above is the same length. The third
-#: is the four rows where an extension zone opens, where the derivation
-#: does not apply and the bands are one, two, two and two.
-_DERIVED_TOTAL = 12132
-_CORNER_SURPLUS = 368
-_RISING_BANDS = 7
+#: It used to be twelve thousand and its accounting needed three derived
+#: terms plus a per-machine residue, because the fill refused the entire
+#: last-column family and the columns whose cells reached the strip it
+#: protected. E3-L taught it to descend that family, which left the three
+#: rows at the pole; E3-P found that two of those three were refused for
+#: properties they do not have, and the band is empty.
+#:
+#: Empty is a stronger pin than any number, because every way of getting
+#: it wrong -- a row miscounted as polar, a candidate position outside the
+#: grid cancelling a valid cell, a screen widened by accident -- adds to
+#: it rather than subtracting.
+_REFUSED_COLUMNS = 0
 
 #: Column zero is the meridian column and the meridian belongs to the
 #: east, so the western quadrants start at one. Counting from zero in all
@@ -108,25 +111,6 @@ def _refused_band(quadrant: str, row: int) -> tuple[tuple[int, str], ...]:
             break
         refused.append((column, verdict))
     return tuple(refused)
-
-
-def _shortfall() -> int:
-    """Rows whose band came out one column short of the derivation.
-
-    Counted rather than pinned. The shortfall is a measurement of the
-    geometry library's predicate on a contact of vanishing measure, not
-    of the grid, and it has been seen at 248 and at 244 on two machines
-    that agree on everything else in this module.
-    """
-    short = 0
-    for quadrant, row, band in _band_profile():
-        last = itacart.last_lattice_column(quadrant, row, SIDE)
-        above = itacart.last_lattice_column(quadrant, row + 1, SIDE)
-        if above > last:
-            continue
-        if len(band) < last - above + 1:
-            short += 1
-    return short
 
 
 @functools.lru_cache(maxsize=None)
@@ -379,56 +363,23 @@ def test_the_refused_band_profile_over_every_row_of_every_quadrant() -> None:
         widths[quadrant][row] = len(band)
         verdicts.update(name for _, name in band)
 
-    # The refusals that come from a structure rather than from a contact
-    # are pinned by equality, none of them decided by a predicate on a
-    # marginal overlap. The polar families are four, not three and a
-    # topology failure: the fourth used to arrive as a self-intersection
-    # of its own densified boundary, and repairing the walk over the pole
-    # moved it onto the refusal its position earns. The count of the
-    # domain family therefore rose by exactly the one that left.
-    assert verdicts["DomainError"] == 14
-    assert verdicts["AntemeridianError"] == 2
-    assert "GeometryError" not in verdicts
-    assert set(verdicts) == {
-        "NonExistentCellError",
-        "DomainError",
-        "AntemeridianError",
-    }
+    # Every refusal that remains is structural -- a polar row, or the
+    # cap's own footprint against the antemeridian -- so none of them is
+    # decided by a predicate on a marginal overlap and the whole profile
+    # is pinned outright. ``NonExistentCellError`` has left the profile
+    # entirely: it was the last lattice column, and the fill descends it.
+    assert not verdicts, dict(verdicts)
 
-    # The total is not pinned as a literal, because part of it is a
-    # measurement of the geometry engine rather than of the grid. It is
-    # asserted as the accounting that produces it, whose three stable
-    # terms are pinned in the derivation test below. Measured: 12 259 on
-    # Linux with shapely 2.1.2, 12 263 on Windows with the shapely the
-    # author has installed, differing only in the last term.
     total = sum(sum(w.values()) for w in widths.values())
-    assert total == _DERIVED_TOTAL + _CORNER_SURPLUS + _RISING_BANDS - _shortfall()
+    assert total == _REFUSED_COLUMNS
 
-    # Away from the four extension-zone rows the band is narrow, and it
-    # is a share of the row rather than a constant: four columns is a
-    # thousandth of the equatorial row and four fifths of row 998.
-    assert widths["NE"][0] == 2
-    assert widths["NE"][300] == 3
-    assert widths["NE"][600] == 4
-    assert widths["NE"][998] == 4
-
-    # Eight rows are refused whole, all of them at the pole.
-    whole = [
-        (quadrant, row)
+    banded = sorted(
+        (quadrant, row, width)
         for quadrant, rows in widths.items()
         for row, width in rows.items()
-        if width == rows[row] and width == _row_length(quadrant, row)
-    ]
-    assert sorted(whole) == [
-        ("NE", 999),
-        ("NE", 1000),
-        ("NW", 998),
-        ("NW", 999),
-        ("SE", 999),
-        ("SE", 1000),
-        ("SW", 998),
-        ("SW", 999),
-    ]
+        if width
+    )
+    assert banded == []
 
 
 def _row_length(quadrant: str, row: int) -> int:
@@ -436,92 +387,53 @@ def _row_length(quadrant: str, row: int) -> int:
 
 
 @pytest.mark.slow
-def test_the_band_width_is_the_rate_at_which_the_row_above_shortens() -> None:
-    """Where the third and fourth refused columns come from.
+def test_the_rows_where_a_zone_opens_are_the_rows_where_the_lattice_lengthens() -> None:
+    """Four rows have a longer row above them, and they are the zones.
 
-    Two of them were derived already: a square of side ``s`` at column
-    ``c`` spans the sheared coordinate over ``[(c - 1) s, (c + 1) s]``, so
-    the outermost cell and its inner neighbour both reach the strip the
-    screen protects. Three and four were not derived, and the reason they
-    were not is that they do not come from this row at all.
+    This is what survives of a derivation that used to explain the width
+    of the refused band. The band was the difference between a row's last
+    column and the next one's, because a cell's bounding box in lattice
+    coordinates reaches the row above and that row's own outermost cell
+    was refused too. None of that is a fact about the grid; it was a fact
+    about a screen that no longer refuses.
 
-    A cell's bounding box in lattice coordinates reaches the row above,
-    and that row is shorter. Its own outermost cell is anomalous too, and
-    it is the one that refuses. So the band is not a property of the row's
-    last column; it is the difference between this row's last column and
-    the next one's, plus the one column of the derivation above.
+    What is a fact about the grid is where the lattice stops shortening
+    and lengthens instead, which happens only where an extension zone
+    carries the domain past the line. That is integer arithmetic over
+    ``last_lattice_column`` and it moves on no machine, so it is pinned
+    here on its own, without a fill in the assertion at all.
 
-    Measured against every row of every quadrant, the derivation lands
-    within a single column on all but four, and the residue is pinned by
-    tally rather than by a bound so that it cannot drift in either
-    direction: one column over where the neighbouring cell only touches
-    the strip at a corner, one column under where the strip's outer bound
-    does not quite reach.
+    The band is asserted empty on those rows: they were the widest in the
+    profile, at 23 to 55 columns, and they are the rows a reader would
+    check first if the descent had quietly stopped working.
     """
-    level: collections.Counter[int] = collections.Counter()
-    shortening: collections.Counter[int] = collections.Counter()
     rising: list[tuple[str, int]] = []
-    derived_total = 0
-    rising_bands = 0
     for quadrant, row, band in _band_profile():
         last = itacart.last_lattice_column(quadrant, row, SIDE)
         above = itacart.last_lattice_column(quadrant, row + 1, SIDE)
         if above > last:
-            # The row above is longer, which happens only where an
-            # extension zone opens. The derivation assumes it is shorter.
             rising.append((quadrant, row))
-            rising_bands += len(band)
-            continue
-        derived = last - above + 1
-        derived_total += derived
-        (level if derived == 1 else shortening)[len(band) - derived] += 1
+            assert not band, (quadrant, row, band)
 
     assert sorted(rising) == [("NE", 708), ("NW", 799), ("SE", 170), ("SW", 237)]
-    assert rising_bands == _RISING_BANDS
-    assert derived_total == _DERIVED_TOTAL
-    assert sum(level.values()) + sum(shortening.values()) == 3998
-
-    # Where the row above is the same length, the derivation gives one
-    # column and the band is one or two. The second is the neighbouring
-    # cell touching the strip at a corner, an intersection that is a
-    # point with no area, and the split is the same on every machine it
-    # has been measured on.
-    assert dict(level) == {1: _CORNER_SURPLUS, 0: 41}
-
-    # Where the row above is shorter, the band is the derivation or one
-    # column less, never more and never two less. Which rows come out one
-    # short is decided by the geometry engine's predicate on a contact of
-    # vanishing measure, so it is named as an environment measurement
-    # rather than pinned: 248 rows on Linux with shapely 2.1.2, 244 on
-    # Windows with the shapely the author has installed. A conditional
-    # pin would make the suite assert different things depending on what
-    # the installer chose, which is the thing this project does not do.
-    assert set(shortening) <= {0, -1}
-    assert sum(shortening.values()) == 3589
 
 
 @pytest.mark.slow
-def test_the_widest_bands_sit_where_an_extension_zone_begins() -> None:
-    """Four rows carry a band an order of magnitude wider than the rest.
+def test_the_rows_that_carried_the_widest_bands_carry_none() -> None:
+    """The four widest bands in the old profile, now empty.
 
-    Elsewhere the band is one to five columns. On these four it is 23 to
-    55, and they are exactly the rows where the last column jumps. Read
-    without the zones this looks like a defect in the filling; it is the
-    filling meeting a row whose neighbour has a different width.
+    They ran 23 to 55 columns where the rest of the grid ran one to five,
+    and they sit where the last column jumps because a zone begins. Read
+    without the zones it looked like a defect in the filling; it was the
+    filling meeting a row whose neighbour has a different width, and
+    refusing rather than descending. Pinned by name so that a descent
+    which regressed on the zone seams would fail here and not only in the
+    aggregate.
     """
-    widest = {
-        ("NE", 799): 40,
-        ("NW", 708): 55,
-        ("SE", 237): 23,
-        ("SW", 170): 23,
-    }
-    for (quadrant, row), expected in widest.items():
-        assert len(_refused_band(quadrant, row)) == expected
-
-    # And the row on either side is back to the ordinary width.
-    for (quadrant, row), _ in widest.items():
-        assert len(_refused_band(quadrant, row - 1)) <= 5
-        assert len(_refused_band(quadrant, row + 1)) <= 5
+    for quadrant, row in (("NE", 799), ("NW", 708), ("SE", 237), ("SW", 170)):
+        assert _refused_band(quadrant, row) == ()
+        assert _refused_band(quadrant, row - 1) == ()
+        assert _refused_band(quadrant, row + 1) == ()
 
 
 @pytest.mark.slow
@@ -544,34 +456,32 @@ def test_the_refused_band_carries_no_exception_the_package_does_not_own() -> Non
 
 @pytest.mark.slow
 def test_the_band_gives_one_diagnosis_for_one_situation() -> None:
-    """Fifty-seven cells used to be refused for the wrong reason.
+    """Every refusal that remains names the polar family, and only it.
 
-    They are outermost cells like any other and the ordinary refusal is
-    the true one, but a different exception arrived first and hid it.
-    Cutting a densified boundary along an extension zone's own edge, when
-    the boundary lies on that edge, left the union carrying the figure
-    plus a train of zero-area pieces, and a collection is not something
-    the projection accepts. Every one of the fifty-seven was the last
-    column of its row in a western quadrant inside the zone latitudes,
-    which is exactly where a cell's outer edge coincides with the cut.
+    Fifty-seven cells used to be refused for the wrong reason: cutting a
+    densified boundary along an extension zone's own edge, when the
+    boundary lies on that edge, left the union carrying the figure plus a
+    train of zero-area pieces, and a collection is not something the
+    projection accepts. That is repaired, and the family those cells
+    belonged to -- the last lattice column -- is no longer refused at
+    all, so the diagnosis it used to draw has left the profile.
 
-    So the assertion is that the outermost family draws the outermost
-    refusal, everywhere, rather than that a count went to zero.
+    The assertion is now the complement: nothing outside the polar rows
+    is refused for any reason, and inside them the reason is the domain
+    or the antemeridian rather than a structural non-existence. A
+    descent that regressed into refusing an ordinary column would fail
+    here with the cell that did it named.
     """
     for quadrant, row, band in _band_profile():
-        last = itacart.last_lattice_column(quadrant, row, SIDE)
         for column, name in band:
-            if column == last and name != "NonExistentCellError":
-                assert (quadrant, row) in (
-                    ("NE", 999),
-                    ("NE", 1000),
-                    ("NW", 998),
-                    ("NW", 999),
-                    ("SE", 999),
-                    ("SE", 1000),
-                    ("SW", 998),
-                    ("SW", 999),
-                ), f"{quadrant}({column:04d}/{row:04d}) refused as {name}"
+            assert row >= 998, (
+                f"{quadrant}({column:04d}/{row:04d}) refused as {name} "
+                f"outside the polar rows"
+            )
+            assert name in {
+                "DomainError",
+                "AntemeridianError",
+            }, f"{quadrant}({column:04d}/{row:04d}) refused as {name}"
 
 
 def test_a_cell_whose_edge_lies_on_a_zone_edge_is_still_a_polygon() -> None:
@@ -593,21 +503,25 @@ def test_a_cell_whose_edge_lies_on_a_zone_edge_is_still_a_polygon() -> None:
     lifted = _lift_extensions(_densify_any(boundary, _auto_segment(2)))
     assert lifted.geom_type in {"Polygon", "MultiPolygon"}
 
-    # And the cell now draws the refusal its position earns, which is the
-    # one every other outermost cell draws.
-    with pytest.raises(itacart.exceptions.NonExistentCellError):
-        itacart.count_internal_cells(boundary, 2)
+    # And the cell is filled, like every other outermost cell. It used to
+    # be refused, and the refusal was the last thing standing between
+    # this seam and the descent.
+    assert itacart.count_internal_cells(boundary, 2) > 0
 
 
-def test_the_polar_row_is_refused_everywhere_by_the_same_route() -> None:
-    """Four quadrants refuse on the domain, and the reason is one.
+def test_row_999_densifies_over_the_pole_and_is_filled_anyway() -> None:
+    """Four quadrants fill it, and the densification still crosses the pole.
 
-    The polar row is refused by design: it is clipped by the pole and
-    does not carry the nominal area. All four quadrants now say exactly
-    that. One of them used to say something else, and the difference was
-    never a property of the grid.
+    Row 999 used to be refused in all four quadrants as "the polar row".
+    It is not the polar row: the pole falls in row 1000, and a cell of
+    row 999 stops 1 966 metres short of it. The classification came from
+    reading ``last_lattice_column`` for the row above and treating its
+    answer of zero as "no cell", which is one cell in an eastern quadrant
+    and none in a western one. These cells are ordinary border-absorbing
+    trapezoids with six real children each, and they fill.
 
-    The cause is measured rather than inferred, and it is the same in all
+    What does not change is the geodesy, and it is measured rather than
+    inferred, the same in all
     four. The ring of a polar-row cell stops short of the pole, and its
     densified form does not: an edge spanning half a turn of longitude is
     filled in along the geodesic joining its ends, and that geodesic runs
@@ -635,17 +549,19 @@ def test_the_polar_row_is_refused_everywhere_by_the_same_route() -> None:
         assert densified.is_valid, quadrant
 
         try:
-            itacart.count_internal_cells(polygon, 2)
-            verdicts[quadrant] = None
-        except Exception as exc:
+            verdicts[quadrant] = itacart.count_internal_cells(polygon, 2)
+        except Exception as exc:  # pragma: no cover - a regression would land here
             verdicts[quadrant] = type(exc).__name__
 
-    assert verdicts == {
-        "NE": "DomainError",
-        "NW": "DomainError",
-        "SW": "DomainError",
-        "SE": "DomainError",
-    }
+    # Filled, not refused, and by a count rather than by a name. The
+    # count is small because the densified ring is not the cell -- an
+    # edge spanning half a turn of longitude is filled in along a
+    # geodesic that runs through the pole, so the figure the fill is
+    # asked about at this latitude is not the figure the index names.
+    # That loss is the subject of the interop measurements; what this
+    # test pins is that the answer is a number in all four quadrants.
+    assert all(isinstance(count, int) for count in verdicts.values()), verdicts
+    assert all(count > 0 for count in verdicts.values()), verdicts
 
 
 def test_the_walk_over_the_pole_lands_on_the_branch_it_was_sent_to() -> None:
