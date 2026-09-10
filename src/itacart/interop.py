@@ -36,7 +36,7 @@ from shapely.geometry.polygon import orient
 from shapely.ops import unary_union
 
 from .boundary import cell_shape, extension_zone, is_valid_cell
-from .cells import cell_to_boundary
+from .cells import cell_to_boundary, geo_to_cell
 from .constants import WGS84_A, WGS84_E2
 from .exceptions import (
     GeometryError,
@@ -44,7 +44,7 @@ from .exceptions import (
     UnsupportedGeometryTypeError,
 )
 from .geometry import Containment, polyfill
-from .index import decompose
+from .index import compose, decompose
 from .resolutions import effective_cell_area, get_resolution, nominal_cell_area
 
 if TYPE_CHECKING:
@@ -381,17 +381,36 @@ def recover_from_geojson(obj: dict[str, Any]) -> list[str]:
     nothing is lost. It is the inverse that makes the exporter checkable
     rather than merely plausible.
 
+    **It refuses rather than returning an empty list.** A bare geometry,
+    a single Feature or a collection without features is not something
+    :func:`cells_to_geojson` writes -- the exporter refuses an empty index,
+    so it never writes an empty collection -- and an empty list for any of
+    them would read as a file that recovered to nothing.
+
     Args:
         obj: A FeatureCollection produced by :func:`cells_to_geojson`.
 
     Returns:
-        One index per Feature, in file order.
+        One index per Feature, in file order, never empty.
 
     Raises:
-        GeometryError: If a Feature carries no recoverable index.
+        GeometryError: If ``obj`` is not a FeatureCollection, if it holds
+            no Feature, or if a Feature carries no recoverable index.
     """
+    kind = obj.get("type") if isinstance(obj, dict) else type(obj).__name__
+    if kind != "FeatureCollection":
+        raise GeometryError(
+            f"recover_from_geojson reads the FeatureCollection that "
+            f"cells_to_geojson writes, and got {kind!r}; a geometry carries no "
+            "index to recover, and filling one is from_geojson"
+        )
+    if not obj.get("features"):
+        raise GeometryError(
+            "the FeatureCollection holds no Feature, and cells_to_geojson never "
+            "writes an empty one, so there is no index to recover"
+        )
     indices: list[str] = []
-    for feature in obj.get("features", []):
+    for feature in obj["features"]:
         index = feature.get("id")
         if index is None:
             index = feature.get("properties", {}).get(INDEX_PROPERTY)
@@ -419,22 +438,40 @@ def from_geojson(
     from the specification, so accepting one here would be accepting
     something the format does not have.
 
+    **A geometry of dimension zero is quantized, not filled.** A Point or
+    a MultiPoint has no area for a fill to cover, and each of its points
+    has exactly one owning cell, which :func:`itacart.cells.geo_to_cell`
+    answers. A Point becomes that cell; a MultiPoint becomes the region its
+    owners compose. ``containment`` is validated but decides nothing here,
+    since all three predicates relate a cell to an area. Lines and polygons
+    go to :func:`itacart.geometry.polyfill`, which refuses a line under
+    ``center`` or ``contains`` by saying that it has no area.
+
     Args:
         obj: A GeoJSON Feature, FeatureCollection or bare geometry.
         resolution: Target resolution level.
         containment: Predicate passed through to
-            :func:`itacart.geometry.polyfill`.
+            :func:`itacart.geometry.polyfill`; not consulted for a geometry
+            of dimension zero.
 
     Returns:
         One compositional index per input geometry, in file order.
 
     Raises:
+        ValueError: If ``containment`` is not one of the three predicates.
+        GeometryError: If a geometry of dimension zero is empty, or if a
+            fill keeps no cell.
         UnsupportedGeometryTypeError: If a geometry is of a type the
             reader cannot draw. The geometry library raises its own error
             for that, which is outside this package's hierarchy, so one
             ``except ITACaRTError`` around a pipeline would not have
             caught it.
     """
+    if containment not in ("center", "intersects", "contains"):
+        raise ValueError(
+            f"containment must be 'center', 'intersects' or 'contains', "
+            f"got {containment!r}"
+        )
     if obj.get("type") == "FeatureCollection":
         geometries = [feature["geometry"] for feature in obj.get("features", [])]
     elif obj.get("type") == "Feature":
@@ -454,6 +491,9 @@ def from_geojson(
             raise UnsupportedGeometryTypeError(
                 f"geometry is not a GeoJSON type this package reads: {exc}"
             ) from exc
+        if drawn.geom_type in ("Point", "MultiPoint"):
+            filled.append(_quantize_points(drawn, resolution))
+            continue
         filled.append(
             polyfill(
                 drawn,
@@ -462,6 +502,14 @@ def from_geojson(
             )
         )
     return filled
+
+
+def _quantize_points(drawn: BaseGeometry, resolution: int) -> str:
+    """The owning cells of a Point or MultiPoint, as one index."""
+    if drawn.is_empty:
+        raise GeometryError(f"an empty {drawn.geom_type} has no position to quantize")
+    points = [drawn] if drawn.geom_type == "Point" else list(drawn.geoms)
+    return compose([geo_to_cell(point.x, point.y, resolution) for point in points])
 
 
 def to_geodataframe(index: str, crs: str = "EPSG:4326") -> "geopandas.GeoDataFrame":

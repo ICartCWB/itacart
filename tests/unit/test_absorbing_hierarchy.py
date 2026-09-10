@@ -527,3 +527,36 @@ class TestTheSimplicityClauseIsDifferential:
         # area test is what refuses it, and this clause must not.
         assert boundary._is_simple_ring(sliver)
         assert not boundary._is_simple_ring(square[:2])
+
+
+def test_a_probe_answer_that_names_no_cell_is_dropped_rather_than_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The discovery keeps its own existence check, and the check still works.
+
+    The probes quantize positions inside the parent. Inside the polar cap
+    the quantizer used to answer some of them with spellings that name no
+    cell, and those reached this check; it no longer does, so the check is
+    exercised here by handing it one such spelling directly. The children
+    must come out unchanged.
+    """
+    denied = "NE(0000/1000(2))"
+    assert boundary.is_valid_cell(denied) is False
+    hy._border_children_of.cache_clear()
+    expected = list(itacart.get_children(POLAR_CAP))
+    import itacart.cells as quantizer
+
+    real = quantizer.sinusoidal_to_cell
+    calls: list[int] = []
+
+    def with_one_denied_answer(x: float, y: float, resolution: int) -> str:
+        calls.append(resolution)
+        return denied if len(calls) == 1 else real(x, y, resolution)
+
+    monkeypatch.setattr(quantizer, "sinusoidal_to_cell", with_one_denied_answer)
+    hy._border_children_of.cache_clear()
+    try:
+        assert list(itacart.get_children(POLAR_CAP)) == expected
+    finally:
+        hy._border_children_of.cache_clear()
+    assert calls and calls[0] == 2

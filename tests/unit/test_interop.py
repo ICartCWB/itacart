@@ -918,7 +918,40 @@ def test_recovery_refuses_a_feature_that_carries_no_index() -> None:
     del collection["features"][0]["id"]
     with pytest.raises(GeometryError):
         interop.recover_from_geojson(collection)
-    assert interop.recover_from_geojson({"type": "FeatureCollection"}) == []
+
+
+@pytest.mark.parametrize(
+    "obj, named",
+    [
+        ({"type": "Point", "coordinates": [-46.633, -23.55]}, "'Point'"),
+        (
+            {"type": "LineString", "coordinates": [[-46.633, -23.55], [-46.6, -23.5]]},
+            "'LineString'",
+        ),
+        ({"type": "Feature", "id": INTERIOR, "geometry": None}, "'Feature'"),
+        ({}, "None"),
+    ],
+)
+def test_recovery_refuses_what_the_exporter_never_writes(
+    obj: dict[str, object], named: str
+) -> None:
+    """An empty list was the answer to all four, and it read as success."""
+    with pytest.raises(GeometryError, match=f"got {named}"):
+        interop.recover_from_geojson(obj)
+
+
+@pytest.mark.parametrize(
+    "collection",
+    [{"type": "FeatureCollection"}, {"type": "FeatureCollection", "features": []}],
+)
+def test_recovery_refuses_a_collection_without_features(
+    collection: dict[str, object],
+) -> None:
+    """The exporter refuses an empty index, so it never writes this."""
+    with pytest.raises(GeometryError, match="holds no Feature"):
+        interop.recover_from_geojson(collection)
+    with pytest.raises(itacart.InvalidIndexError):
+        interop.cells_to_geojson("")
 
 
 def test_the_geographic_round_trip_loses_the_row_below_the_pole() -> None:
@@ -1026,6 +1059,65 @@ def test_from_geojson_reads_a_collection_a_feature_and_a_bare_geometry() -> None
         == interop.from_geojson(geometry, 1)
         == [INTERIOR]
     )
+
+
+@pytest.mark.parametrize("containment", ["center", "intersects", "contains"])
+def test_a_point_is_quantized_whatever_the_containment(containment: str) -> None:
+    """Dimension zero has one destination: the owning cell, not a fill."""
+    point = {"type": "Point", "coordinates": [-46.633, -23.55]}
+    assert interop.from_geojson(point, 9, containment=containment) == [
+        itacart.geo_to_cell(-46.633, -23.55, 9)
+    ]
+
+
+def test_a_point_on_a_cell_edge_gets_its_one_owner_not_its_neighbours() -> None:
+    """``intersects`` would name every cell the point touches; the owner is one."""
+    cell = itacart.geo_to_cell(-46.633, -23.55, 9)
+    lon, lat = itacart.cell_to_anchor(cell)
+    point = {"type": "Point", "coordinates": [lon, lat]}
+    owner = itacart.geo_to_cell(lon, lat, 9)
+    assert interop.from_geojson(point, 9, containment="intersects") == [owner]
+    touching = itacart.polyfill(shape(point), 9, containment="intersects")
+    assert itacart.count_cells(touching) > 1
+
+
+def test_a_multipoint_becomes_the_region_its_owners_compose() -> None:
+    coordinates = [[-46.633, -23.55], [-46.6, -23.5], [-46.633, -23.55]]
+    owners = [itacart.geo_to_cell(lon, lat, 9) for lon, lat in coordinates]
+    collection = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {},
+                "geometry": {"type": "MultiPoint", "coordinates": coordinates},
+            }
+        ],
+    }
+    assert interop.from_geojson(collection, 9) == [itacart.compose(owners)]
+
+
+@pytest.mark.parametrize("kind", ["Point", "MultiPoint"])
+def test_an_empty_point_geometry_is_refused_by_name(kind: str) -> None:
+    with pytest.raises(GeometryError, match=f"empty {kind} has no position"):
+        interop.from_geojson({"type": kind, "coordinates": []}, 9)
+
+
+def test_a_bad_containment_is_refused_before_any_geometry_is_read() -> None:
+    point = {"type": "Point", "coordinates": [-46.633, -23.55]}
+    with pytest.raises(ValueError, match="containment must be"):
+        interop.from_geojson(point, 9, containment="touches")
+
+
+@pytest.mark.parametrize("containment", ["center", "contains"])
+def test_a_line_is_refused_for_having_no_area_not_for_being_empty(
+    containment: str,
+) -> None:
+    line = {"type": "LineString", "coordinates": [[-46.633, -23.55], [-46.6, -23.5]]}
+    with pytest.raises(GeometryError, match="LineString has no area") as caught:
+        interop.from_geojson(line, 9, containment=containment)
+    assert "may be empty" not in str(caught.value)
+    assert interop.from_geojson(line, 9, containment="intersects")[0]
 
 
 def test_from_geojson_passes_the_containment_predicate_through() -> None:

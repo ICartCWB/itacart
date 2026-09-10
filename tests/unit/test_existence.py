@@ -687,10 +687,11 @@ def test_the_fourth_form_is_dispositioned_by_name(name: str) -> None:
                 {"type": "FeatureCollection", "features": [{"properties": {}}]}
             )
 
-    # And total over a mapping it simply does not recognise, which is a
-    # different answer from refusing and is stated rather than assumed.
+    # And a mapping it does not recognise is refused as well, rather than
+    # answered with an empty list that read as a file recovering to nothing.
     if name == "recover_from_geojson":
-        assert itacart.recover_from_geojson({"type": "Nope"}) == []
+        with pytest.raises(ITACaRTError, match="got 'Nope'"):
+            itacart.recover_from_geojson({"type": "Nope"})
 
 
 def test_the_fourth_form_no_longer_hides_an_escape() -> None:

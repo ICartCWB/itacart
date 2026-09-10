@@ -25,20 +25,24 @@ idea the whole module rests on, and it is what keeps the descent free of
 trigonometry below resolution 1.
 
 The base index reported at resolution 1 is ``X = u_col - Y`` and
-``Y = j``, so ``X`` is the distance from the cell's representative point
-to the prime meridian along the parallel, in 10 km units, and the anchor
-recovers as ``x = X * l``. That is what makes the paper's neighbour rules
+``Y = j``, so ``X`` is the distance from the cell's anchor to the prime
+meridian along the parallel, in 10 km units, and the anchor recovers as
+``x = X * l``. That is what makes the paper's neighbour rules
 hold (section 3.1): the northern neighbour keeps ``X``, the eastern one
 keeps ``Y``.
 
 Boundary scope
 --------------
 
-Prime-meridian triangles, antemeridian trapezoids and the extension zones
-are F4's. Until then a position resolving onto one of them raises rather
-than returning a parallelogram that does not exist
-(:class:`~itacart.exceptions.NonExistentCellError`,
-:class:`~itacart.exceptions.AntemeridianError`).
+Positions on the prime-meridian triangles, the border-absorbing cells, the
+polar row, the two caps and the extension zones all quantize. A position
+in the strip between the last lattice column and the domain border is
+carried into the cell that absorbs the strip; inside the meridian column
+the carry reaches the triangle descent too, and where the meridian cell is
+the only one left in a fine row the position is carried onto the meridian.
+That the answer exists is measured, not proven: every answer over the
+lattices the test suite enumerates, both caps at every resolution
+included, is confirmed by :func:`itacart.boundary.is_valid_cell`.
 """
 
 from __future__ import annotations
@@ -133,14 +137,42 @@ def _check_resolution(resolution: int) -> None:
 
 
 def _check_position(lon: float, lat: float) -> None:
-    """Reject non-finite or out-of-range geodetic input."""
+    """Reject non-finite or out-of-range geodetic input.
+
+    A longitude past 180 degrees is accepted in one place only: inside the
+    latitude band of an extension zone, out to the meridian the extension
+    reaches. That is how this package itself writes a position there --
+    :func:`cell_to_centroid`, :func:`cell_to_anchor` and
+    :func:`cell_to_boundary` all carry such longitudes rather than wrap
+    them -- and a quantizer that refused what the package emits would
+    break every round trip through an extended cell. Anywhere else a
+    longitude past 180 names no position the package writes, and it is
+    refused.
+    """
     for value, name in ((lon, "lon"), (lat, "lat")):
         if not math.isfinite(value):
             raise DomainError(f"{name} must be finite, got {value!r}")
     if not -90.0 <= lat <= 90.0:
         raise DomainError(f"lat {lat} outside [-90, 90]")
-    if not -180.0 <= lon <= 180.0:
-        raise DomainError(f"lon {lon} outside [-180, 180]")
+    if -180.0 <= lon <= 180.0 or _is_eastern_spelling(lon, lat):
+        return
+    raise DomainError(
+        f"lon {lon} outside [-180, 180], and not the eastern spelling of a "
+        "position inside an extension zone"
+    )
+
+
+def _is_eastern_spelling(lon: float, lat: float) -> bool:
+    """Whether a longitude past 180 lies inside the extension of its band."""
+    from .boundary import extension_zone_for_point
+    from .constants import EXTENSION_ZONES
+
+    if lon <= ANTEMERIDIAN_LON:
+        return False
+    zone = extension_zone_for_point(lon, lat)
+    if zone is None:
+        return False
+    return lon <= 2.0 * ANTEMERIDIAN_LON + EXTENSION_ZONES[zone].lon_limit
 
 
 def _resolve_extension(lon: float, lat: float) -> tuple[float, str]:
@@ -270,19 +302,22 @@ def geo_to_cell(lon: float, lat: float, resolution: int) -> str:
     trigonometry runs below resolution 1.
 
     Args:
-        lon: Longitude in decimal degrees.
+        lon: Longitude in decimal degrees, in ``[-180, 180]``. Inside the
+            latitude band of an extension zone the eastern spelling past
+            180 degrees is accepted as well, out to the meridian the
+            extension reaches, because that is how the package writes
+            positions there.
         lat: Latitude in decimal degrees.
         resolution: Target resolution level, 1 to 13.
 
     Returns:
-        The atomic compositional index of the containing cell.
+        The atomic compositional index of the containing cell. Over every
+        lattice the test suite enumerates, both caps at every resolution
+        included, :func:`itacart.boundary.is_valid_cell` confirms it.
 
     Raises:
         ResolutionError: If ``resolution`` is out of range.
         DomainError: If the position is outside the addressable domain.
-        NonExistentCellError: If the position falls on a prime-meridian
-            triangular cell.
-        AntemeridianError: If the position lies near the antemeridian.
     """
     _check_resolution(resolution)
     _check_position(lon, lat)
@@ -348,6 +383,15 @@ def _quantize(x: float, y: float, quadrant: str, resolution: int) -> str:
     last = last_lattice_column(quadrant, fine_row, side)
     if fine_column > last:
         u = (last + fine_row + 0.5) * side
+        # The triangle descent reads the position, not the sheared column,
+        # so the carry has to reach the position as well or the descent
+        # names the strip's own lattice cell, which does not exist. Where
+        # the meridian cell is the only one left in the fine row -- every
+        # fine row of a cap that holds the pole -- the position is carried
+        # onto the meridian itself: lattice column zero is not the
+        # triangle, and its centre can fall outside it.
+        carried = 0.0 if last <= 0 else u - absolute_y
+        x = carried if x >= 0.0 else -carried
 
     row = int(math.floor((absolute_y + FLOOR_EPSILON_M) / _L1))
     column = int(math.floor((u + FLOOR_EPSILON_M) / _L1)) - row
@@ -560,12 +604,18 @@ def is_quadrant_boundary_cell(cell: str) -> bool | list[bool]:
 
 
 def cell_to_anchor(cell: str) -> tuple[float, float] | list[tuple[float, float]]:
-    """Representative position of a cell, as defined by ITACaRT.
+    """Anchor of a cell: the vertex its index literally encodes.
 
-    ITACaRT designates the lower-left vertex, not the centroid, so that
-    addressing behaves like a Cartesian system for surveyors. This is the
-    position that satisfies OGC Core requirement 12, and it is also why
-    EAERS requirement 27 is only partially met.
+    **The anchor is not the representative position.** The paper offers
+    the lower-left vertex for that role, so that addressing behaves like
+    a Cartesian system for surveyors, and names it for OGC Core
+    requirement 12. The requirement asks for a position *within* the
+    cell, and a vertex lies on its boundary, so this package designates
+    the centroid instead: :func:`cell_to_centroid` is the one point every
+    single-point route answers with, and it is what
+    :func:`itacart.engine.describe` declares. The anchor remains what it
+    is -- the lattice corner the descent inverts exactly -- and the
+    metrics that are defined at a corner are measured here.
 
     "Lower-left" is meant in the cell's own quadrant: the vertex nearest
     the equator and nearest the prime meridian. It is the vertex the
@@ -631,7 +681,14 @@ def cell_to_sinusoidal(
 
 
 def cell_to_centroid(cell: str) -> tuple[float, float] | list[tuple[float, float]]:
-    """Geodetic centroid of a cell.
+    """Geodetic centroid of a cell, which is its representative position.
+
+    **Every route that answers a cell with one point answers with this
+    one.** :func:`itacart.cell_to_latlng` returns it in ``(lat, lng)``
+    order, :meth:`itacart.engine.ITACaRT.cell_to_centroid` returns it for
+    one cell, :func:`itacart.geometry.cells_to_geometry` rebuilds vertices
+    on it, and :func:`itacart.engine.describe` declares it. The centroid
+    lies within the cell in every family, which a vertex cannot.
 
     Computed on the projection plane, where the cell's edges are straight
     and its centroid is the area-weighted one, then inverted back to

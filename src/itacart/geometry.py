@@ -29,13 +29,12 @@ count on the lattice is a cell count on the ellipsoid.
 Scope
 -----
 
-Filling runs on the parallelogram interior and on the prime-meridian
-column. The column holds triangles, not the sheared square the ordinary
-descent tests, so it has a descent of its own: see
-:func:`_fill_meridian_node`. Geometry reaching the last lattice column of
-its row or the polar row is still refused rather than filled, because
-there the cell is not the square either and no second descent replaces
-it. See :func:`polyfill` for the exact predicate.
+Filling runs on the parallelogram interior and on every family that is
+not the sheared square the ordinary descent tests. The prime-meridian
+column holds triangles and has a descent of its own, see
+:func:`_fill_meridian_node`; the last lattice column of a row, which
+absorbs the border strip, the polar row and the two caps are walked by
+:func:`_fill_border_root`. No family is refused.
 
 Provenance: ``itacart_core/cell_filling.py``, ``densification.py``,
 ``geometry_blob.py`` (``canonicalize_rings``) and
@@ -54,7 +53,7 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Callable, Final, Literal, Sequence, TypeVar
 
 from .boundary import _CLIP_EPSILON_M, crosses_antemeridian, last_lattice_column
-from .cells import _ROW_LETTERS, cell_to_anchor, geo_to_cell
+from .cells import _ROW_LETTERS, cell_to_centroid, geo_to_cell
 from .constants import (
     DESCENT_CLOSE,
     DESCENT_OPEN,
@@ -1721,25 +1720,18 @@ def polyfill(
     geometry before the quadrant split -- the one figure that sees both
     halves of a cell the split cuts in two.
 
-    **Limitation, not a rule.** Two families are refused rather than
-    filled: the last lattice column of a row, and the polar row. Neither
-    cell is the sheared square the descent tests, and unlike the
-    prime-meridian column neither has a descent of its own yet, so the
-    fill refuses them.
+    **Every family is filled.** The last lattice column of a row, which
+    absorbs the border strip, the polar row and the two caps are not the
+    sheared square the descent tests, and each is walked by a descent of
+    its own rather than refused. An earlier version of this function
+    refused the first two, and said so here as a gap in the function
+    rather than a property of the grid; the gap is closed.
 
-    The cells exist. :func:`itacart.cells.geo_to_cell` names them,
-    :mod:`itacart.boundary` builds their rings, and the hierarchy
-    addresses their children; ITACaRT absorbs the border strip into the
-    last column rather than dropping it. What is refused is the fill's
-    ability to descend a trapezoid, and the refusal is stated here so
-    that it is read as a gap in this function and not as a property of
-    the grid -- which is what happened to the prime-meridian column,
-    documented as a restriction for several phases before it turned out
-    to need only a descent of its own.
-
-    **Reopening trigger.** When the fill can descend a trapezoid, the
-    absorbing cell stops being refused and starts being absorbed, and
-    the screen loses the last-column family.
+    **A geometry without area fills nothing under an areal predicate.**
+    ``center`` and ``contains`` keep a cell by its relation to an area, so
+    a point, a line or a collapsed polygon keeps no cell under them, and
+    the refusal says that rather than guessing the geometry was empty.
+    ``intersects`` keeps the cells such a geometry touches.
 
     Args:
         geometry: A Shapely geometry in EPSG:4326.
@@ -1759,11 +1751,10 @@ def polyfill(
         AntemeridianError: If the geometry crosses 180 degrees outside an
             extension zone.
         UnsupportedGeometryTypeError: On unsupported geometry types.
-        NonExistentCellError: If the geometry reaches a border-absorbing
-            column, which is a limitation of this function rather than a
-            property of the grid.
-        DomainError: If the geometry reaches the polar row.
-        GeometryError: If the fill exceeds :data:`MAX_FILL_CELLS`.
+        GeometryError: If the fill exceeds :data:`MAX_FILL_CELLS`, or if it
+            keeps no cell: the geometry is empty, it has no area under
+            ``center`` or ``contains``, or it is narrower than one cell
+            under the chosen mode. The message names which.
     """
     _check_resolution(resolution)
     _check_jobs(n_jobs)
@@ -1877,12 +1868,24 @@ def polyfill(
         if ordered.get(quadrant)
     ]
     if not roots:
-        raise GeometryError(
-            "geometry covers no cell at this resolution; it may be empty "
-            "after projection or narrower than one cell under the chosen "
-            "containment mode"
-        )
+        raise GeometryError(_covers_no_cell(geometry, containment))
     return SIBLING_SEPARATOR.join(roots)
+
+
+def _covers_no_cell(geometry: "BaseGeometry", containment: str) -> str:
+    """Name why a fill kept no cell, from the geometry rather than a guess."""
+    if geometry.is_empty:
+        cause = "it is empty"
+    elif geometry.area == 0.0 and containment != "intersects":
+        cause = (
+            f"a {geometry.geom_type} has no area, and {containment!r} keeps a "
+            "cell only by its relation to an area; 'intersects' keeps the "
+            "cells the geometry touches, and a point has exactly one owner, "
+            "which geo_to_cell answers"
+        )
+    else:
+        cause = f"it is narrower than one cell under {containment!r}"
+    return f"geometry covers no cell at this resolution: {cause}"
 
 
 def count_internal_cells(polygon: "Polygon", resolution: int, n_jobs: int = 1) -> int:
@@ -2080,6 +2083,12 @@ def vertex_to_cell(
     one rather than closing on a duplicate. A LINESTRING is not cyclic
     and keeps both ends even when they coincide.
 
+    **The cell is the precision.** A vertex written as a cell says how
+    well it is known -- within its cell at the resolution chosen -- which
+    a coordinate cannot say: section 3.1.10 of RFC 7946 rules out reading
+    uncertainty from the number of digits. :func:`cells_to_geometry` is the
+    inverse, and its docstring states what a rebuilt vertex promises.
+
     Provenance: ``cadastral_processor/vertex_extractor.py``.
 
     Args:
@@ -2119,9 +2128,50 @@ def cells_to_geometry(
 ) -> "BaseGeometry":
     """Rebuild a geometry from an ordered vertex cell list.
 
-    Inverse of :func:`vertex_to_cell`. Reconstruction lands on cell
-    anchors, so it is exact only to the resolution used: at resolution 13
-    that is 1 cm.
+    Inverse of :func:`vertex_to_cell`. **Every vertex is rebuilt at the
+    representative position of its cell, the centroid**, which is the
+    point :func:`itacart.cells.cell_to_centroid` returns and
+    :func:`itacart.engine.describe` declares. There is no argument
+    choosing another: the anchor is a vertex of the cell, on its boundary
+    rather than within it, and it does not answer the question this
+    function asks.
+
+    **What a rebuilt vertex promises.** It lies within the cell that
+    encoded the original vertex and quantizes back to that cell at the
+    same resolution, in every family, extension zones and polar caps
+    included. Its distance from the original is at most the cell's
+    *reach*: the distance from the centroid to the cell's farthest vertex.
+    For an ordinary parallelogram of side ``l`` the reach follows the
+    shear of the projection::
+
+        l * max(sqrt(1 + u**2) / 2, sqrt((1 - u / 2)**2 + 1 / 4))
+        u = |lon * sin(lat)|, with lon in radians, at the centroid
+
+    which is 1.118 l on the prime meridian, 0.707 l at its minimum where
+    ``u = 1``, and 1.65 l as ``u`` reaches pi. That is the reach to first
+    order in the side. A finite cell departs from it where the side is not
+    small against the distance to the pole: over the ordinary cells of a
+    lattice of the four quadrants at five resolutions from 10 km to 1 cm,
+    the measured reach stays within 0.3 per cent of the law below 85
+    degrees of latitude, and exceeds it by up to 2.1 per cent above.
+
+    Three families are not bounded by that law, and are named rather than
+    folded into it. A prime-meridian triangle reaches ``sqrt(10) / 3 * l``,
+    within 0.3 per cent below 85 degrees and 1.4 per cent above. A cell
+    that absorbs the domain border, a polar-row cell and a cap cell reach
+    further: up to 2.06 l over the last existing column of every resolution-1
+    row in the four quadrants, together with the border, polar-row and cap
+    cells of the lattice above and both caps at every resolution. That is a
+    measurement over the population named, not a bound beyond it.
+
+    **Precision.** Coordinates are returned at full double precision and
+    never rounded. How precisely a rebuilt vertex is known is declared by
+    the resolution of its cell, not by its digits: section 3.1.10 of RFC
+    7946 says the number of digits of a coordinate does not indicate its
+    uncertainty, so a coordinate cannot carry it and an index can. Rounding
+    would also destroy what it claims to summarise: resolution-13
+    neighbours lie about 9e-8 degree of latitude apart, and at six decimal
+    places their centroids become one point.
 
     **The inverse is exact for a hole-free geometry only.**
     :func:`vertex_to_cell` returns one flat sequence with the holes
@@ -2151,13 +2201,13 @@ def cells_to_geometry(
         raise GeometryError("cannot rebuild a geometry from an empty cell list")
     coords: list[tuple[float, float]] = []
     for cell in cells:
-        anchor = cell_to_anchor(cell)
-        if not isinstance(anchor, tuple):
+        position = cell_to_centroid(cell)
+        if not isinstance(position, tuple):
             raise GeometryError(
                 f"{cell!r} names more than one cell; cells_to_geometry takes "
                 "atomic indices in traversal order"
             )
-        coords.append((float(anchor[0]), float(anchor[1])))
+        coords.append((float(position[0]), float(position[1])))
 
     if geometry_type == "Point":
         if len(coords) != 1:

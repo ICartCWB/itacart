@@ -778,6 +778,135 @@ def test_quantization_rejects_positions_outside_the_domain(
         cells.geo_to_cell(lon, lat, 9)
 
 
+#: A position inside each extension zone, written west of the antemeridian.
+ZONE_POSITIONS = {"FIJI": (-179.5, -18.5), "CHUKOTKA": (-172.0, 68.0)}
+
+
+@pytest.mark.parametrize("resolution", [1, 5, 13])
+@pytest.mark.parametrize("zone", sorted(ZONE_POSITIONS))
+def test_a_centroid_written_past_180_quantizes_back_to_its_own_cell(
+    zone: str, resolution: int
+) -> None:
+    """The package writes extension positions past 180; it reads them back.
+
+    The first assertion keeps the test from passing over nothing: the
+    centroid really is written past the antemeridian.
+    """
+    lon, lat = ZONE_POSITIONS[zone]
+    cell = cells.geo_to_cell(lon, lat, resolution)
+    centroid = cells.cell_to_centroid(cell)
+    assert centroid[0] > 180.0
+    assert cells.geo_to_cell(centroid[0], centroid[1], resolution) == cell
+
+
+@pytest.mark.parametrize("zone", sorted(ZONE_POSITIONS))
+def test_both_spellings_of_an_extension_position_name_one_cell(zone: str) -> None:
+    lon, lat = ZONE_POSITIONS[zone]
+    for resolution in (1, 9, 13):
+        western = cells.geo_to_cell(lon, lat, resolution)
+        assert cells.geo_to_cell(lon + 360.0, lat, resolution) == western
+
+
+@pytest.mark.parametrize("zone, limit", [("FIJI", 182.0), ("CHUKOTKA", 190.5)])
+def test_the_eastern_spelling_stops_at_the_meridian_the_zone_reaches(
+    zone: str, limit: float
+) -> None:
+    lat = ZONE_POSITIONS[zone][1]
+    assert boundary.is_valid_cell(cells.geo_to_cell(limit, lat, 5)) is True
+    with pytest.raises(DomainError, match="outside"):
+        cells.geo_to_cell(limit + 1e-4, lat, 5)
+
+
+@pytest.mark.parametrize("lon, lat", [(181.0, 42.0), (181.0, -30.0), (181.0, 18.5)])
+def test_a_longitude_past_180_outside_every_zone_band_is_refused(
+    lon: float, lat: float
+) -> None:
+    """Not a general widening: Fiji's band on the wrong hemisphere is refused too."""
+    with pytest.raises(DomainError, match="outside"):
+        cells.geo_to_cell(lon, lat, 5)
+
+
+@pytest.mark.parametrize("lon, lat", [(-181.0, -18.5), (-190.0, 68.0)])
+def test_a_longitude_west_of_minus_180_is_refused_inside_a_zone_band(
+    lon: float, lat: float
+) -> None:
+    """Only the eastern spelling is the package's; there is no western one."""
+    with pytest.raises(DomainError, match="outside"):
+        cells.geo_to_cell(lon, lat, 5)
+
+
+#: A lattice over both caps, which begin at about 89.9823 degrees.
+CAP_LATITUDES = (89.9824, 89.9868, 89.9912, 89.9956, 90.0)
+CAP_LONGITUDES = tuple(-180.0 + 22.5 * k for k in range(17))
+
+
+def _cap_positions() -> list[tuple[float, float, int]]:
+    return [
+        (lon, sign * lat, resolution)
+        for resolution in range(2, 14)
+        for lat in CAP_LATITUDES
+        for lon in CAP_LONGITUDES
+        for sign in (1.0, -1.0)
+    ]
+
+
+def test_quantization_in_the_caps_names_only_cells_that_exist() -> None:
+    """Where the border carry meets the triangle descent, every answer exists.
+
+    The carry moved the sheared column but the triangle descent reads the
+    position, so a cap position in the strip beyond the last column was
+    descended as if the strip had a cell of its own, and in a fine row that
+    holds the pole as if a column other than the meridian survived there.
+    """
+    answers = [cells.geo_to_cell(lon, lat, res) for lon, lat, res in _cap_positions()]
+    assert len(answers) == 2040
+    assert all(boundary.is_valid_cell(answer) for answer in answers)
+
+
+def test_the_cap_lattice_reaches_the_carry_at_every_resolution() -> None:
+    """The control: the lattice does contain positions the carry acts on."""
+    from itacart.cells import _resolve_extension
+    from itacart.geodesy import geodetic_to_sinusoidal
+
+    carried = {resolution: 0 for resolution in range(2, 14)}
+    for lon, lat, resolution in _cap_positions():
+        lon, quadrant = _resolve_extension(lon, lat)
+        x, y = geodetic_to_sinusoidal(lon, lat)
+        side = cells.cell_size(resolution)
+        fine_row = int(math.floor((abs(y) + FLOOR_EPSILON_M) / side))
+        fine_column = int(math.floor((abs(x) + abs(y) + FLOOR_EPSILON_M) / side))
+        last = boundary.last_lattice_column(quadrant, fine_row, side)
+        carried[resolution] += fine_column - fine_row > last
+    assert all(count > 0 for count in carried.values()), carried
+
+
+def test_a_cap_answer_holds_its_position_within_a_chord() -> None:
+    """The answer contains the position, or lies within 0.1 mm of it.
+
+    The tolerance is the chord: the cell's border side is a straight
+    segment on the plane standing in for a curved meridian. Which cell is
+    canonical where two existing cells overlap is not asserted here.
+    """
+    from shapely.geometry import Point, Polygon
+
+    from itacart.cells import _resolve_extension
+    from itacart.geodesy import geodetic_to_sinusoidal
+
+    for lon, lat, resolution in _cap_positions():
+        answer = cells.geo_to_cell(lon, lat, resolution)
+        lon, _ = _resolve_extension(lon, lat)
+        x, y = geodetic_to_sinusoidal(lon, lat)
+        ring = boundary.plane_ring(answer)[1]
+        origin = ring[0]
+        polygon = Polygon([(a - origin[0], b - origin[1]) for a, b in ring])
+        point = Point(x - origin[0], y - origin[1])
+        assert polygon.contains(point) or polygon.exterior.distance(point) <= 1e-4, (
+            answer,
+            lon,
+            lat,
+        )
+
+
 @pytest.mark.parametrize("bogus", [float("nan"), float("inf")])
 def test_the_plane_entry_point_rejects_non_finite_coordinates(bogus: float) -> None:
     with pytest.raises(DomainError, match="finite"):
