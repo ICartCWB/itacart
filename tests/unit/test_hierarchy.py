@@ -1,8 +1,8 @@
 """Tests for :mod:`itacart.hierarchy`.
 
-Organised by acceptance criterion of F5, then by surface.
+Organised by property of the hierarchy, then by surface.
 
-Two conventions carried from earlier phases matter here. Fixtures never
+Two conventions of the suite matter here. Fixtures never
 spell a refinement code by hand: the alphabet strictly alternates between
 levels, so a hand-written chain that repeats an alphabet is invalid, and
 every code comes from :func:`refinement_alphabet` or from ``_chain_to``.
@@ -50,7 +50,7 @@ L1 = cell_size(1)
 INTERIOR = "NE(0500/0100)"
 
 #: The equatorial trapezoid whose fifth child needs column 2004 to be
-#: spelled. The one example the opening package names explicitly.
+#: spelled.
 EQUATOR_TRAPEZOID = "NE(2003/0000)"
 
 
@@ -144,7 +144,7 @@ def _every_row_last_cell(quadrant: str = "NE") -> Iterator[str]:
 
 
 # --------------------------------------------------------------------------
-# Criterion 1 - get_parent is pure lexical truncation and returns a prefix
+# Get_parent is pure lexical truncation and returns a prefix
 # --------------------------------------------------------------------------
 
 
@@ -193,7 +193,7 @@ class TestGetParentIsLexical:
 
 
 class TestGetParentReturnsPrefixNotCell:
-    """The falsifying family the boundary phase measured.
+    """The falsifying family the boundary tests measure.
 
     Above roughly 18.5 degrees the child of a border-absorbing cell is
     spelled under the next column, so its lexical prefix names no cell.
@@ -229,7 +229,7 @@ class TestGetParentReturnsPrefixNotCell:
 
 
 # --------------------------------------------------------------------------
-# Criterion 2 - get_children counts 4 and 25 away from the border only
+# Get_children counts 4 and 25 away from the border only
 # --------------------------------------------------------------------------
 
 
@@ -354,7 +354,7 @@ class TestGetChildrenOnTheBorder:
 
 
 # --------------------------------------------------------------------------
-# Criterion 3 - get_descendants is a generator
+# Get_descendants is a generator
 # --------------------------------------------------------------------------
 
 
@@ -369,7 +369,7 @@ class TestGetDescendantsStreams:
         stream = hy.get_descendants(INTERIOR, MAX_RESOLUTION)
         assert get_resolution(next(stream)) == MAX_RESOLUTION
 
-    def test_the_cardinality_argument_of_the_briefing(self) -> None:
+    def test_twelve_refinements_multiply_to_a_million_million(self) -> None:
         ratios = [refinement_ratio(level) for level in range(2, MAX_RESOLUTION + 1)]
         assert ratios.count(4) == 6
         assert ratios.count(25) == 6
@@ -391,7 +391,7 @@ class TestGetDescendantsStreams:
 
 
 # --------------------------------------------------------------------------
-# Criterion 4 - compact_cells runs to a fixed point
+# Compact_cells runs to a fixed point
 # --------------------------------------------------------------------------
 
 
@@ -433,18 +433,21 @@ class TestCompactCells:
         full = ix.compose(hy.get_children(EQUATOR_TRAPEZOID, flatten=True))
         assert hy.compact_cells(full) == EQUATOR_TRAPEZOID
 
-    def test_normalize_collapses_where_compaction_declines(self) -> None:
-        """Recorded contrast, not a claim that either is wrong.
+    def test_neither_normalize_nor_compaction_claims_an_incomplete_family(
+        self,
+    ) -> None:
+        """At the border a complete alphabet is not a complete family.
 
-        ``normalize`` fixes spelling and applies the alphabet collapse;
-        compaction counts the children that exist. On the border the two
-        disagree, and this test pins the disagreement so it cannot drift
-        unnoticed.
+        ``normalize`` fixes spelling and withholds the alphabet collapse under
+        a border-absorbing parent; compaction counts the children that exist.
+        Both leave the four quaternary children of the equatorial trapezoid
+        as written, because the trapezoid has a fifth, spelled under the next
+        column: claiming the parent would claim that fifth child too.
         """
         four = ix.compose(
             _child(EQUATOR_TRAPEZOID, code) for code in refinement_alphabet(2)
         )
-        assert ix.normalize(four) == EQUATOR_TRAPEZOID
+        assert ix.normalize(four) == "NE(2003/0000(1,2,3,4))"
         assert hy.compact_cells(four) != EQUATOR_TRAPEZOID
 
     def test_cells_of_several_parents_are_kept_apart(self) -> None:
@@ -455,7 +458,7 @@ class TestCompactCells:
 
 
 # --------------------------------------------------------------------------
-# Criterion 5 - the uncompact/compact round trip
+# The uncompact/compact round trip
 # --------------------------------------------------------------------------
 
 
@@ -470,14 +473,14 @@ class TestRoundTrip:
         packed = hy.compact_cells(ix.compose(uniform))
         assert sorted(hy.uncompact_cells(packed, 3)) == sorted(uniform)
 
-    def test_the_border_falsification_attempt_of_the_briefing(self) -> None:
-        """The case the opening package asked to be attacked.
+    def test_the_round_trip_holds_on_the_case_built_to_break_it(self) -> None:
+        """The case built to break completeness at the border.
 
         Four quaternary children of the equatorial trapezoid, compacted
         and expanded again. Under a completeness test based on
-        ``refinement_ratio`` this returns five cells and the criterion
+        ``refinement_ratio`` this returns five cells and the round trip
         would need a declared restriction. Under enumeration it returns
-        the same four, and the criterion holds unrestricted.
+        the same four, and the round trip holds unrestricted.
         """
         four = [_child(EQUATOR_TRAPEZOID, code) for code in refinement_alphabet(2)]
         packed = hy.compact_cells(ix.compose(four))
@@ -516,7 +519,7 @@ class TestRoundTrip:
 
 
 # --------------------------------------------------------------------------
-# Criterion 6 - vectorised semantics
+# Vectorised semantics
 # --------------------------------------------------------------------------
 
 
@@ -564,7 +567,7 @@ class TestVectorisedSemantics:
 
 
 # --------------------------------------------------------------------------
-# Criterion 7 - contains is an index predicate, never a geometry query
+# Contains is an index predicate, never a geometry query
 # --------------------------------------------------------------------------
 
 
@@ -640,7 +643,7 @@ class TestIsAncestor:
 
 
 # --------------------------------------------------------------------------
-# Criterion 8 - child_position has a declared order under a border parent
+# Child_position has a declared order under a border parent
 # --------------------------------------------------------------------------
 
 

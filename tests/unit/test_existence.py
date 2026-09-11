@@ -6,10 +6,10 @@ accepted a spelling it denies, thirteen answered about the neighbouring
 cell because the western zero column folds onto its eastern twin, and one
 handed that denied spelling back inside a cell list.
 
-Two counts existed for that population and neither could be checked. One
-phase measured forty-two, a later probe measured forty-six, and the two
-did not contradict each other -- they measured different populations and
-neither left an instrument behind. So the number this module reports comes
+Two counts can be given for that population, forty-two and forty-six,
+and they do not contradict each other: they measure different populations.
+A count without its instrument cannot be checked, so the number this module
+reports comes
 from a census that is mechanical over ``itacart.__all__`` and versioned
 here, and the completeness of that census is itself an assertion: a name
 added to the package lands in a bucket or in a named exemption, and there
@@ -51,10 +51,9 @@ INDEX_PARAMETERS = frozenset({"index", "cell", "cells", "origin", "parent_index"
 
 #: Second and later arguments for the consumers that need them. Asserted
 #: complete below, so a consumer that grows a required argument fails here
-#: rather than dropping out of the census in silence. That silence is how
-#: the opening probe for this phase missed ``deflect`` and ``get_neighbor``
-#: entirely: their second parameter is a ``Literal``, the probe could not
-#: type it, and it skipped them without saying so.
+#: rather than dropping out of the census in silence. A probe that cannot
+#: type a ``Literal`` second parameter skips ``deflect`` and ``get_neighbor``
+#: entirely, and says nothing.
 EXTRA_ARGUMENTS: dict[str, tuple[Any, ...]] = {
     "are_neighbor_cells": ("NE(0001/0000)",),
     "cells_to_directed_edge": ("NE(0001/0000)",),
@@ -118,8 +117,8 @@ LEXICAL_EXEMPTION = (
 #: the five were right: this is the prefix layer, where column 2004 is a
 #: prefix and never a cell and a tree node is allowed to be an address
 #: rather than a place. Changing three established exception types here is
-#: a decision about the grammar, not a tidy-up, and the phase that makes
-#: it should make it on purpose.
+#: a decision about the grammar, not a tidy-up, and whoever makes it should
+#: make it on purpose.
 REFUSES_AS_SYNTAX = (
     "encode_node",
     "encode_tree",
@@ -209,8 +208,7 @@ def _call(name: str, first: Any) -> Any:
     result = function(argument, *EXTRA_ARGUMENTS.get(name, ()))
     if inspect.isgenerator(result):
         # A generator that did not run did not answer. Counting one as a
-        # refusal is how the opening probe for this phase reported four
-        # refusals that were nothing of the kind.
+        # refusal reports refusals that are nothing of the kind.
         return list(result)
     return result
 
@@ -366,7 +364,7 @@ def test_the_syntactic_refusers_still_honour_the_arbiter(name: str) -> None:
     The spelling does not get in, which is what the contract asks. The
     exception says the index is malformed and ``is_valid_index`` calls the
     same string well formed, so the two disagree, and the disagreement is
-    pinned where the next phase will read it rather than smoothed over.
+    pinned where the next change will meet it rather than smoothed over.
     """
     from itacart.exceptions import InvalidIndexError
 
@@ -457,7 +455,7 @@ def test_no_public_name_emits_a_spelling_the_predicate_denies() -> None:
     """
     # ``to_geodataframe`` is the one name held out, and it is held out by
     # name rather than by a bare exception handler. It needs the optional
-    # geo extra, and that extra brings ``pyproj`` back transitively, so a
+    # geo extra, and that extra brings ``pyproj`` in transitively, so a
     # sweep that walked it would quietly stop measuring anything the day
     # someone ran the suite without the extra installed -- and would fail
     # for a reason that has nothing to do with what it claims to check.
@@ -613,7 +611,7 @@ def test_ancestry_is_lexical_and_stays_that_way() -> None:
     """The exemption that had to be measured before it could be believed.
 
     ``get_parent`` is total over the grammar and its prefix may name no
-    cell, which the boundary phase measured and pinned. Guarding it would
+    cell, which the boundary tests measure and pin. Guarding it would
     have relitigated that, and this test is why the guard stops short of
     it.
     """

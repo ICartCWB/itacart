@@ -20,11 +20,8 @@ conformance suite measures. A declaration that drifted from the
 measurements would be worse than no declaration, because it would be
 believed.
 
-Provenance, carried forward from the placeholder this file replaces:
-nothing here is portable from ``itacart_core``, which has no coverage for
-this module. The 406 figure that once stood in that note was the size of
-its whole suite rather than a count of anything reusable, measured in an
-earlier phase with a grep that returned nothing.
+Provenance: nothing here is portable from ``itacart_core``, which has no
+coverage for this module.
 """
 
 from __future__ import annotations

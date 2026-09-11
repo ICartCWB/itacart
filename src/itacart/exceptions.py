@@ -26,10 +26,11 @@ bare ``ValueError`` that leaked from somewhere else::
           +-- MalformedBlobError
           +-- IncompatibleProfileError
 
-Three names are load-bearing, cited verbatim in the acceptance criteria of
-later phases: :class:`ConvergenceError` (F1),
-:class:`InvalidRefinementCodeError` (F2) and :class:`AntemeridianError`
-(F7). Renaming any of them breaks those phases by name, not by logic.
+Three names are load-bearing, because callers and tests catch them by name:
+:class:`ConvergenceError` from the geodesic solvers,
+:class:`InvalidRefinementCodeError` from the index parser and
+:class:`AntemeridianError` from the fill. Renaming any of them breaks those
+callers by name, not by logic.
 """
 
 from __future__ import annotations

@@ -482,24 +482,41 @@ def _fold_meridian_column(globe: _Node) -> None:
     globe.children = folded
 
 
-def _collapse(node: _Node) -> None:
+def _collapse(node: _Node, path: tuple[str, ...] = ()) -> None:
     """Replace a fully covered node by itself, deepest level first.
 
     Only refinement levels collapse. A quadrant holding every base cell is
     left alone: resolution 1 is addressed by the 2 004 x 1 001 product of
     Table 1, not by a refinement alphabet, and materialising it to test
     completeness would cost two million comparisons per node.
+
+    Nor does a node that absorbs the domain border. Such a cell also fathers
+    children spelled under the next column's stem, so a complete alphabet
+    under it is not all of its children, and replacing the alphabet by the
+    node would name cells the index does not hold. Whether a node absorbs
+    the border is a fact of how the lattice is built, read from its
+    spelling; nothing here measures the region.
     """
+    here = (*path, node.code) if node.code else path
     for child in node.children:
-        _collapse(child)
+        _collapse(child, here)
     if not node.children or node.resolution < BASE_CELL_RESOLUTION:
         return
     # The node has children, so their resolution is addressed by a
     # refinement alphabet: the parser refuses to descend past
     # MAX_RESOLUTION, which is why this lookup needs no guard.
     whole_children = {child.code for child in node.children if not child.children}
-    if whole_children == _ALPHABET_SET[node.resolution + 1]:
+    if whole_children == _ALPHABET_SET[node.resolution + 1] and not _absorbs_the_border(
+        here
+    ):
         node.children = []
+
+
+def _absorbs_the_border(path: tuple[str, ...]) -> bool:
+    """Whether the cell a tree path spells absorbs the domain border."""
+    from .boundary import _absorbs_border
+
+    return bool(_absorbs_border(join_components(list(path))))
 
 
 def _sibling_key(node: _Node) -> tuple[int, int]:
@@ -681,7 +698,13 @@ def normalize(index: str) -> str:
     Two reductions are applied to a fixed point:
 
     1. **Completeness collapse** - a node whose children are all present
-       is replaced by the node itself (``4(1,2,3,4)`` becomes ``4``).
+       is replaced by the node itself (``4(1,2,3,4)`` becomes ``4``),
+       except where the node absorbs the domain border. A complete
+       alphabet under such a node is not all of its children -- some are
+       spelled under the next column's stem -- so the collapse would name
+       cells the index does not hold. The region an index denotes never
+       changes here; folding by the children a cell actually has is
+       :func:`itacart.hierarchy.compact_cells`.
     2. **Sibling ordering** - siblings are sorted by their refinement
        alphabet so a region has one spelling regardless of input order.
 
@@ -691,7 +714,11 @@ def normalize(index: str) -> str:
     to four digits, since ``1400/374`` and ``1400/0374`` are one cell.
 
     This is what makes OGC requirement 13 hold in practice: two indices
-    denote the same region if and only if their canonical forms are equal.
+    whose canonical forms are equal denote the same region, and away from
+    the border-absorbing family the converse holds as well. At that
+    border an absorbing cell and the complete set of its children are one
+    region with two canonical spellings, because the fold that would unify
+    them is compaction's, not normalization's.
 
     Provenance: the ASCII analogue of
     ``binary_index.recompose_to_prefix_form``.

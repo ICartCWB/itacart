@@ -82,9 +82,9 @@ __all__ = [
 # The series in the third flattening n = (a - b) / (a + b) converges in
 # five terms to below a nanometre for WGS84 (n ~ 1.68e-3), which is seven
 # orders of magnitude finer than the 1 cm cell of resolution 13. It is the
-# implementation the itacart-app validated and the one ported here; the
-# composite-Simpson quadrature named in the phase briefing ships alongside
-# it as an independent reference.
+# implementation the itacart-app validated and the one ported here; a
+# composite-Simpson quadrature ships alongside it as an independent
+# reference.
 
 _N3: Final[float] = (WGS84_A - WGS84_B) / (WGS84_A + WGS84_B)
 """Third flattening of the WGS84 ellipsoid."""
@@ -106,7 +106,7 @@ NEWTON_TOL_RAD: Final[float] = 1e-14
 """Convergence tolerance of the Newton step in :func:`inverse_meridian_arc`.
 
 Radians. ``1e-14 rad`` is 5.7e-13 degrees, two orders below the 1e-10
-degree of acceptance criterion 3, and still above the double-precision
+degree the inversion is held to, and still above the double-precision
 floor near the pole.
 """
 
@@ -116,9 +116,9 @@ NEWTON_MAX_ITER: Final[int] = 16
 QUADRATURE_TOL_M: Final[float] = 1e-9
 """Absolute tolerance of :func:`meridian_arc_quadrature`, in metres.
 
-The phase briefing asks for 1e-10 m. That target is unreachable in
-float64: one ULP of the meridian quadrant (1.0e7 m) is 1.86e-9 m, so a
-tolerance ten times finer than that lies below the representable
+A tolerance of 1e-10 m is unreachable in float64: one ULP of the
+meridian quadrant (1.0e7 m) is 1.86e-9 m, so a tolerance ten times
+finer than that lies below the representable
 resolution of the result and the refinement loop would never exit on the
 comparison. The tolerance is therefore floored at four ULP of the running
 estimate.
@@ -407,8 +407,8 @@ def geodetic_to_sinusoidal(lon_deg: float, lat_deg: float) -> tuple[float, float
     Applies Eq. (1) to the abscissa and Eq. (2) to the ordinate. The
     result is signed: eastern longitudes give positive ``x``, northern
     latitudes positive ``y``. Quadrant mirroring, which is what keeps the
-    ITACaRT index free of negative components, happens in ``cells``
-    (F3), not here.
+    ITACaRT index free of negative components, happens in
+    :mod:`itacart.cells`, not here.
 
     Args:
         lon_deg: Longitude in degrees, relative to the prime meridian.
@@ -495,7 +495,7 @@ def sinusoidal_to_geodetic(
 # equations a geodesic satisfies, which agrees to under a nanodegree over
 # an enumerated grid of 568 cases, and against Clairaut's relation, which
 # closes at machine precision. The
-# package needs them for orthodromic densification (F7): a straight line
+# package needs them for orthodromic densification: a straight line
 # on the sinusoidal plane is not a geodesic on the ellipsoid, so a long
 # edge has to be resampled along the true geodesic before it is filled.
 #
@@ -515,8 +515,8 @@ def _vincenty_inverse(
     """Vincenty inverse, instrumented.
 
     Returns ``(distance_m, azimuth_deg, iterations)``. The iteration count
-    is what the F1 verification notebook plots to locate the near-antipodal
-    frontier; the public wrapper drops it.
+    locates the near-antipodal frontier, where convergence slows; the public
+    wrapper drops it.
     """
 
     if lat1 == lat2 and lon1 == lon2:
@@ -649,8 +649,8 @@ def inverse_geodesic(
         Coincident points return ``(0.0, 0.0)``. The azimuth is a
         convention there, not a bearing -- the geodesic is degenerate and
         has no direction. Raising instead would force every caller to
-        guard the duplicated-vertex case that F7 deduplication exists to
-        absorb.
+        guard the duplicated-vertex case that vertex deduplication in
+        :mod:`itacart.geometry` exists to absorb.
 
     Example:
         >>> d, az = inverse_geodesic(0.0, 0.0, 0.0, 1.0)

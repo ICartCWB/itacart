@@ -1,24 +1,17 @@
 """Tests for :mod:`itacart.interop`.
 
-The module arrived written, measured and argued for, and none of it was
-pinned: every statement it makes about its own behaviour lived in the
-prose of a handoff. This file turns each statement into a named test or
-records, by name, that the measurement said otherwise.
+Every statement the module makes about its own behaviour is a named test
+here, or is recorded, by name, where measurement bounds it.
 
-Two of them said otherwise, and both are here rather than in a note. The
-claim that no cell but a polar cap comes near the pole was true and its
-scope was resolution one, which was never said; refined, ordinary cells
-walk toward the pole without limit and three of them were being exported
-as bands around the whole parallel. The claim that a vertex at the pole
-and a ring spanning the full circle are the same condition holds through
-resolution four and fails at five, where four cells hold the pole and one
+Two statements hold only within a scope, and both are pinned with it. No
+cell but a polar cap comes near the pole at resolution one; refined,
+ordinary cells walk toward the pole without limit. A vertex at the pole
+and a ring spanning the full circle are the same condition through
+resolution four and not at five, where four cells hold the pole and one
 spans the circle.
 
-No tests are portable from itacart_core: it has no coverage for this
-module. The 406 figure that used to stand here was the size of its whole
-suite, not a count of anything reusable. Measured in F6 with
-`grep -rlE "neighbor|grid_disk|adjacen" itacart_core/`, which returned
-nothing.
+No tests are portable from itacart_core, which has no code for this
+module.
 
 Enumerations here walk a column range and test each address, rather than
 counting up from zero until an address fails. Column zero does not exist
@@ -1103,10 +1096,27 @@ def test_an_empty_point_geometry_is_refused_by_name(kind: str) -> None:
         interop.from_geojson({"type": kind, "coordinates": []}, 9)
 
 
-def test_a_bad_containment_is_refused_before_any_geometry_is_read() -> None:
-    point = {"type": "Point", "coordinates": [-46.633, -23.55]}
+@pytest.mark.parametrize(
+    "obj",
+    [
+        {"type": "Point", "coordinates": [-46.633, -23.55]},
+        {"type": "Nope", "coordinates": [0.0, 0.0]},
+        {"type": "Polygon", "coordinates": "not coordinates"},
+    ],
+    ids=["readable point", "unsupported type", "unreadable coordinates"],
+)
+def test_a_bad_containment_is_refused_before_any_geometry_is_read(
+    obj: dict[str, object],
+) -> None:
+    """The mode is judged first, so no reader error can stand in for it.
+
+    A readable point is refused alike in either order. An unsupported type
+    and coordinates that cannot be read are what tell the orders apart:
+    read first, each would raise the reader's own error before the mode
+    was ever looked at.
+    """
     with pytest.raises(ValueError, match="containment must be"):
-        interop.from_geojson(point, 9, containment="touches")
+        interop.from_geojson(obj, 9, containment="touches")
 
 
 @pytest.mark.parametrize("containment", ["center", "contains"])
@@ -1133,7 +1143,7 @@ def test_from_geojson_passes_the_containment_predicate_through() -> None:
 # --------------------------------------------------------------------------
 #
 # These are measured against a stand-in rather than against GeoPandas, and
-# the reason is a property the package spent a phase acquiring: the suite
+# the reason is a property the package holds on purpose: the suite
 # has to count the same with and without the optional extras, and a skip
 # keyed on an import undoes that. What the package owns here is the
 # adapter -- which features it hands over, which CRS it declares, when it
@@ -1262,8 +1272,8 @@ def test_the_arbitrary_geometry_path_is_public_in_fact_and_not_in_name() -> None
 
     It is not in the module's ``__all__``, so the surface invariant does
     not carry it to the package top and the census does not see it. That
-    is a decision for the phase that owns the engine and the conformance
-    surface, not a defect; what it must not be is untested, because the
+    is a decision about the engine and the conformance surface, not a
+    defect; what it must not be is untested, because the
     coverage threshold counts it either way.
     """
     assert "geometry_to_geojson" not in interop.__all__

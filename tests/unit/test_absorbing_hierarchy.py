@@ -21,13 +21,18 @@ nominal one and which is therefore the hardest case in the grid.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from functools import lru_cache
+
 import pytest
 from shapely.geometry import Polygon
 
 import itacart
 from itacart import boundary
 from itacart import hierarchy as hy
-from itacart.constants import CELL_SIZE_M, refinement_alphabet
+from itacart.constants import CELL_SIZE_M, QUADRANTS, refinement_alphabet
+from itacart.exceptions import DomainError, GeometryError, NonExistentCellError
+from itacart.index import join_components, split_components
 from itacart.resolutions import refinement_ratio
 
 POLAR_CAP = "NE(0000/1000)"
@@ -560,3 +565,428 @@ def test_a_probe_answer_that_names_no_cell_is_dropped_rather_than_kept(
     finally:
         hy._border_children_of.cache_clear()
     assert calls and calls[0] == 2
+
+
+# --------------------------------------------------------------------------
+# The discovery's own guards, exercised by injection
+# --------------------------------------------------------------------------
+#
+# Every parent the suite visits is enumerated on the first pass, with every
+# probe answered and nothing left uncovered. The guards below exist for the
+# parents nobody has visited, so each is exercised by handing the discovery
+# the one condition it guards against and asserting what it does with it.
+
+
+@pytest.fixture
+def fresh_discovery() -> Iterator[None]:
+    """Discovery is cached per parent; each injection must reach it anew."""
+    hy._border_children_of.cache_clear()
+    yield
+    hy._border_children_of.cache_clear()
+
+
+def _counted_passes(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """The probe spacing of every discovery pass, in order."""
+    spacings: list[float] = []
+    real = hy._probe_points
+
+    def counted(body: Polygon, spacing: float) -> list[tuple[float, float]]:
+        spacings.append(spacing)
+        return real(body, spacing)
+
+    monkeypatch.setattr(hy, "_probe_points", counted)
+    return spacings
+
+
+def test_a_pass_that_keeps_no_candidate_halves_the_spacing_and_retries(
+    monkeypatch: pytest.MonkeyPatch, fresh_discovery: None
+) -> None:
+    """Finding nothing on one pass is a reason to look closer, not an error."""
+    expected = hy._border_children_of(POLAR_CAP, 2)
+    hy._border_children_of.cache_clear()
+    spacings = _counted_passes(monkeypatch)
+    real = hy._shared_area
+    monkeypatch.setattr(
+        hy, "_shared_area", lambda a, b: 0.0 if len(spacings) == 1 else real(a, b)
+    )
+    assert hy._border_children_of(POLAR_CAP, 2) == expected
+    assert spacings == [spacings[0], spacings[0] / 2.0]
+
+
+def test_a_pass_that_leaves_the_parent_uncovered_halves_the_spacing_and_retries(
+    monkeypatch: pytest.MonkeyPatch, fresh_discovery: None
+) -> None:
+    """Candidates that do not cover the ring are not accepted as the children.
+
+    The first pass is made to see half of every area, so its candidates
+    survive the overlap filter but cover half the parent. The coverage
+    check sends it round again at half the spacing, and the second pass,
+    seeing true areas, returns what an undisturbed discovery returns.
+    """
+    expected = hy._border_children_of(POLAR_CAP, 2)
+    hy._border_children_of.cache_clear()
+    spacings = _counted_passes(monkeypatch)
+    real = hy._shared_area
+    monkeypatch.setattr(
+        hy,
+        "_shared_area",
+        lambda a, b: real(a, b) / 2.0 if len(spacings) == 1 else real(a, b),
+    )
+    assert hy._border_children_of(POLAR_CAP, 2) == expected
+    assert spacings == [spacings[0], spacings[0] / 2.0]
+
+
+def test_a_discovery_that_never_covers_the_parent_is_refused_after_every_pass(
+    monkeypatch: pytest.MonkeyPatch, fresh_discovery: None
+) -> None:
+    """Only an exhausted budget is an error, and it is spent before refusing."""
+    spacings = _counted_passes(monkeypatch)
+    monkeypatch.setattr(hy, "_shared_area", lambda a, b: 0.0)
+    with pytest.raises(GeometryError, match="could not be enumerated"):
+        hy._border_children_of(POLAR_CAP, 2)
+    assert len(spacings) == hy._DISCOVERY_PASSES
+    assert all(later == earlier / 2.0 for earlier, later in zip(spacings, spacings[1:]))
+
+
+def test_a_candidate_that_overlaps_the_others_is_refused_not_kept(
+    monkeypatch: pytest.MonkeyPatch, fresh_discovery: None
+) -> None:
+    """The proof refuses a set of cells whose interiors overlap.
+
+    One probe is answered with the parent itself, a real cell at the wrong
+    resolution that covers everything the true children cover. Coverage
+    then balances exactly -- the surplus area is the overlap -- so the only
+    check that can object is the overlap check, and it must.
+    """
+    import itacart.cells as quantizer
+
+    real = quantizer.sinusoidal_to_cell
+    calls: list[int] = []
+
+    def with_the_parent_once(x: float, y: float, resolution: int) -> str:
+        calls.append(resolution)
+        return POLAR_CAP if len(calls) == 1 else real(x, y, resolution)
+
+    monkeypatch.setattr(quantizer, "sinusoidal_to_cell", with_the_parent_once)
+    with pytest.raises(GeometryError, match="overlap by"):
+        hy._border_children_of(POLAR_CAP, 2)
+    assert calls and calls[0] == 2
+
+
+def test_a_probe_the_quantizer_refuses_is_skipped_not_fatal(
+    monkeypatch: pytest.MonkeyPatch, fresh_discovery: None
+) -> None:
+    """A refused probe proposes nothing, and the proof decides as before."""
+    expected = hy._border_children_of(POLAR_CAP, 2)
+    hy._border_children_of.cache_clear()
+    import itacart.cells as quantizer
+
+    real = quantizer.sinusoidal_to_cell
+    calls: list[int] = []
+
+    def with_one_refusal(x: float, y: float, resolution: int) -> str:
+        calls.append(resolution)
+        if len(calls) == 1:
+            raise DomainError("a probe the quantizer will not answer")
+        return real(x, y, resolution)
+
+    monkeypatch.setattr(quantizer, "sinusoidal_to_cell", with_one_refusal)
+    assert hy._border_children_of(POLAR_CAP, 2) == expected
+    assert len(calls) > 1 and calls[0] == 2
+
+
+def test_a_shared_edge_the_engine_cannot_resolve_is_retried_on_rebuilt_rings() -> None:
+    """The area falls back to rings rebuilt by a zero-width buffer.
+
+    The engine has reported a side location conflict on sibling rings that
+    share an edge. None of the rings the suite builds provokes one with the
+    engine installed here, so the conflict is raised by a stand-in for the
+    first ring, and the answer must be the area the rebuilt rings share --
+    here a whole child, which is inside its parent.
+    """
+    from shapely.errors import GEOSException
+
+    parent = Polygon(boundary.plane_ring(POLAR_CAP)[1])
+    child = Polygon(boundary.plane_ring(CAP_SUBDIVISION)[1])
+    refused: list[str] = []
+
+    class Conflicted:
+        def intersection(self, other: Polygon) -> Polygon:
+            refused.append("intersection")
+            raise GEOSException("TopologyException: side location conflict")
+
+        def buffer(self, distance: float) -> Polygon:
+            return parent.buffer(distance)
+
+    shared = hy._shared_area(Conflicted(), child)  # type: ignore[arg-type]
+    assert refused == ["intersection"]
+    assert shared == pytest.approx(child.area, rel=1e-9)
+    assert shared > 0.0
+
+
+def test_a_prefix_that_does_not_father_the_cell_is_not_taken_for_its_parent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The lexical prefix is trusted only as far as its child relation.
+
+    Where the prefix names an absorbing cell it is the parent only if its
+    own children include the cell. No child found so far fails that, so the
+    check is exercised by withholding one child from its prefix's answer.
+    The resolution must then look past the prefix -- west along the row,
+    then among the prefix's siblings, without asking the prefix again --
+    and, finding no cell that fathers the child, refuse it by name.
+    """
+    last = itacart.last_lattice_column("NE", 300, itacart.cell_size(1))
+    root = f"NE({last:04d}/0300)"
+    prefix = next(
+        cell
+        for cell in hy._children_of(root)
+        if boundary.absorbs_border(cell)
+        and split_components(cell)[:-1] == split_components(root)
+    )
+    child = next(
+        cell
+        for cell in hy._children_of(prefix)
+        if split_components(cell)[:-1] == split_components(prefix)
+    )
+    assert hy._parent_cell(child) == prefix
+    real = hy._children_of
+    asked: list[str] = []
+
+    def withholding(cell: str) -> list[str]:
+        asked.append(cell)
+        return [c for c in real(cell) if not (cell == prefix and c == child)]
+
+    monkeypatch.setattr(hy, "_children_of", withholding)
+    with pytest.raises(NonExistentCellError, match="has no parent cell"):
+        hy._parent_cell(child)
+    siblings = [cell for cell in real(root) if cell != prefix]
+    assert siblings
+    assert asked.count(prefix) == 1
+    assert set(siblings) <= set(asked)
+
+
+def test_a_resolution_1_cell_is_answered_by_its_quadrant_without_a_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The neighbour search is reached only below resolution 1.
+
+    It reads a column from the second component, which a resolution-1 cell
+    has, but it never gets that far with one: the prefix of a resolution-1
+    cell is its quadrant, and every quadrant names a cell that absorbs
+    nothing. Checked on one ordinary and one absorbing resolution-1 cell
+    per quadrant, with the search replaced by a refusal.
+    """
+    side = itacart.cell_size(1)
+    for quadrant in QUADRANTS:
+        assert boundary.is_valid_cell(quadrant)
+        assert not boundary.absorbs_border(quadrant)
+
+    def no_search(*_: object) -> Iterator[str]:
+        raise AssertionError("the neighbour search was consulted")
+
+    monkeypatch.setattr(hy, "_neighbouring_parents", no_search)
+    for quadrant in QUADRANTS:
+        last = itacart.last_lattice_column(quadrant, 300, side)
+        for column in (last - 1, last):
+            cell = f"{quadrant}({column:04d}/0300)"
+            assert boundary.is_valid_cell(cell)
+            assert hy._parent_cell(cell) == quadrant
+        assert boundary.absorbs_border(f"{quadrant}({last:04d}/0300)")
+
+
+# --------------------------------------------------------------------------
+# Two relations: lexical ancestry and physical refinement
+# --------------------------------------------------------------------------
+#
+# Away from the border a cell's children are the codes of the next alphabet
+# spelled under it, and the two relations are one. An absorbing cell also
+# fathers children spelled under the next column's stem, so there the string
+# prefix and the refinement part: ``contains``, ``is_ancestor`` and
+# ``get_parent`` answer the prefix, and ``get_children``, compaction,
+# expansion and the tree blob answer the refinement. ``normalize`` is a
+# syntactic rewrite that must not change the region an index denotes.
+
+
+@lru_cache(maxsize=1)
+def _lateral_families() -> tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]:
+    """Absorbing resolution-1 cells with their children, split by spelling.
+
+    The last column of every row in the four quadrants, and near the pole
+    also the column before it and column zero -- the population the
+    divergence was measured on. Each entry is the parent, the children
+    spelled under it, and the children spelled under another stem.
+    """
+    side = itacart.cell_size(1)
+    families = []
+    for quadrant in QUADRANTS:
+        first = 0 if quadrant.endswith("E") else 1
+        for row in range(1001):
+            last = itacart.last_lattice_column(quadrant, row, side)
+            columns = {last, max(first, last - 1), 0} if row >= 999 else {last}
+            for column in sorted(columns):
+                parent = f"{quadrant}({column:04d}/{row:04d})"
+                if column < first or not boundary.is_valid_cell(parent):
+                    continue
+                if not boundary.absorbs_border(parent):
+                    continue
+                children = tuple(hy._children_of(parent))
+                stem = split_components(parent)
+                own = tuple(c for c in children if split_components(c)[:-1] == stem)
+                other = tuple(c for c in children if c not in own)
+                families.append((parent, own, other))
+    return tuple(families)
+
+
+@pytest.mark.slow
+def test_the_two_relations_part_on_an_enumerated_border_population() -> None:
+    """Where the prefix and the refinement disagree, and how far.
+
+    Of 4 002 absorbing resolution-1 cells, 2 392 father 3 327 children
+    spelled under a stem that names no cell. For every one of them the
+    lexical predicates answer the prefix and the physical ones the
+    refinement, and no child spelled under a denied stem is left without
+    the parent that fathers it.
+    """
+    families = _lateral_families()
+    assert len(families) == 4_002
+    parting = [family for family in families if family[2]]
+    assert len(parting) == 2_392
+    others = [(parent, child) for parent, _, other in parting for child in other]
+    assert len(others) == 3_327
+    assert len({itacart.get_parent(child) for _, child in others}) == 2_437
+    for parent, child in others:
+        assert itacart.contains(parent, child) is False
+        assert itacart.is_ancestor(parent, child) is False
+        assert not itacart.is_valid_cell(itacart.get_parent(child))
+        assert hy._parent_cell(child) == parent
+
+
+@pytest.mark.slow
+def test_normalize_does_not_grow_a_region_under_an_absorbing_parent() -> None:
+    """Lexical completeness is not physical completeness at the border.
+
+    In 1 624 of the parting families the children spelled under the parent
+    already spell the whole alphabet. Collapsing them into the parent would
+    name the children spelled under the next column as well, which the
+    index did not hold. ``normalize`` leaves such a family as written, so
+    the region it denotes is the region it was given.
+    """
+    alphabet = set(refinement_alphabet(2))
+    complete = [
+        (parent, own)
+        for parent, own, other in _lateral_families()
+        if other and {split_components(c)[-1] for c in own} == alphabet
+    ]
+    assert len(complete) == 1_624
+    for parent, own in complete:
+        normal = itacart.normalize(itacart.compose(list(own)))
+        assert set(itacart.uncompact_cells(normal, 2)) == set(own), parent
+
+
+@pytest.mark.slow
+def test_compaction_by_the_children_a_parent_has_stays_with_compact_cells() -> None:
+    """The physical fold is compaction's, and it still happens."""
+    for parent, own, other in _lateral_families():
+        if not other:
+            continue
+        assert itacart.compact_cells(itacart.compose(list(own))) != parent
+        assert itacart.compact_cells(itacart.compose(list(own + other))) == parent
+
+
+def test_normalize_still_collapses_a_complete_node_outside_the_absorbing_family() -> (
+    None
+):
+    """The guard concerns absorbing nodes only.
+
+    The column west of every absorbing one, in the four quadrants and every
+    row below the polar pair, holds ordinary cells, and a complete alphabet
+    under each still collapses to it. So does a complete alphabet under an
+    ordinary child of an absorbing cell, while the same alphabet under an
+    absorbing child does not.
+    """
+    side = itacart.cell_size(1)
+    collapsed = 0
+    for quadrant in QUADRANTS:
+        for row in range(999):
+            column = itacart.last_lattice_column(quadrant, row, side) - 1
+            parent = f"{quadrant}({column:04d}/{row:04d})"
+            if not boundary.is_valid_cell(parent):
+                continue
+            assert not boundary.absorbs_border(parent)
+            children = [f"{parent[:-1]}({code}))" for code in refinement_alphabet(2)]
+            assert itacart.normalize(itacart.compose(children)) == parent
+            collapsed += 1
+    assert collapsed > 3_900
+    ordinary, absorbing = "NE(2003/0000(1))", "NE(1784/0300(2))"
+    assert not boundary.absorbs_border(ordinary) and boundary.absorbs_border(absorbing)
+    for cell, folds in ((ordinary, True), (absorbing, False)):
+        stem = split_components(cell)
+        children = [join_components([*stem, code]) for code in refinement_alphabet(3)]
+        normal = itacart.normalize(itacart.compose(children))
+        assert (normal == cell) is folds, cell
+
+
+@pytest.mark.slow
+def test_under_the_caps_the_relations_part_by_the_measured_counts() -> None:
+    """The caps part the two relations deeper than the lateral border does.
+
+    Walked by refinement from both caps to resolution 5, every cell's
+    physical parent is the cell that returned it. By resolution from 2 to
+    5 there are 2, 20, 88 and 2 388 cells; 0, 0, 12 and 228 of them are
+    spelled under a prefix that names no cell, and for those ``contains``
+    of the physical parent answers false; 0, 0, 0 and 284 more carry such a
+    prefix further up while being spelled under their physical parent.
+    """
+    cells = [0, 0, 0, 0]
+    own_prefix_denied = [0, 0, 0, 0]
+    denied_further_up = [0, 0, 0, 0]
+    for cap in (POLAR_CAP, "SE(0000/1000)"):
+        frontier = [cap]
+        for level in range(4):
+            following = []
+            for parent in frontier:
+                for child in hy._children_of(parent):
+                    following.append(child)
+                    cells[level] += 1
+                    assert hy._parent_cell(child) == parent
+                    stem = split_components(child)
+                    prefixes = [join_components(stem[:k]) for k in range(2, len(stem))]
+                    if boundary.is_valid_cell(prefixes[-1]):
+                        denied = not all(boundary.is_valid_cell(p) for p in prefixes)
+                        denied_further_up[level] += denied
+                        assert prefixes[-1] == parent or not denied
+                    else:
+                        own_prefix_denied[level] += 1
+                        assert itacart.contains(parent, child) is False
+            frontier = following
+    assert cells == [2, 20, 88, 2_388]
+    assert own_prefix_denied == [0, 0, 12, 228]
+    assert denied_further_up == [0, 0, 0, 284]
+
+
+@pytest.mark.slow
+def test_the_quantizer_nests_by_refinement_in_the_caps() -> None:
+    """Each answer in the caps refines the coarser answer at the same place.
+
+    At 2 450 positions -- 25 latitudes from 89.9824 degrees to the pole, 49
+    longitudes, both hemispheres -- the physical parent of the answer at
+    every resolution from 2 to 6 is the answer one resolution coarser. Its
+    lexical prefix is not, at 468, 468 and 92 positions from resolution 4
+    to 6, which is the lexical relation parting from the physical one.
+    """
+    latitudes = [89.9824 + k * (90.0 - 89.9824) / 24 for k in range(25)]
+    longitudes = [-180.0 + 7.5 * k for k in range(49)]
+    lexical_misses = {resolution: 0 for resolution in range(2, 7)}
+    for sign in (1.0, -1.0):
+        for lat in latitudes:
+            for lon in longitudes:
+                answers = {
+                    r: itacart.geo_to_cell(lon, sign * lat, r) for r in range(1, 7)
+                }
+                for resolution in range(2, 7):
+                    finer, coarser = answers[resolution], answers[resolution - 1]
+                    assert hy._parent_cell(finer) == coarser, (lon, sign * lat, finer)
+                    if join_components(split_components(finer)[:-1]) != coarser:
+                        lexical_misses[resolution] += 1
+    assert lexical_misses == {2: 0, 3: 0, 4: 468, 5: 468, 6: 92}

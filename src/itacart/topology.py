@@ -317,8 +317,8 @@ def _neighbor_of_atom(cell: str, direction: Direction) -> str | None:
     except DomainError:
         # The index stopped being able to represent the step: the neighbouring
         # parent does not tile a square grid, so the wrapped code would name
-        # the wrong sibling. This is the line the phase drew — structure is
-        # resolved lexically, and geometry enters only past it.
+        # the wrong sibling. That is the line between the two regimes:
+        # structure is resolved lexically, and geometry enters only past it.
         return _by_contact(cell, direction)
 
 
@@ -367,7 +367,8 @@ def _changes_frame(cell: str, answer: str) -> bool:
 
     Checking instead whether the step left its resolution-1 cell would be
     true of every step at resolution 1, and would put a geometric test on the
-    path of the interior, which is the path the phase exists to keep lexical.
+    path of the interior, which is the path the index is meant to answer
+    lexically.
     """
     origin, target = split_components(cell), split_components(answer)
     if origin[0] != target[0]:
@@ -639,8 +640,8 @@ def _is_exceptional(cell: str) -> bool:
       mirror is truncated and the neighbour opposite is in the other quadrant.
 
     The set is about six thousand cells at resolution 1, out of six million.
-    Everything outside it is answered lexically, which is what keeps criterion
-    9 meaningful rather than vacuous.
+    Everything outside it is answered lexically, which is what keeps the
+    promise of lexical adjacency meaningful rather than vacuous.
     """
     components = split_components(cell)
     if len(components) < 2:
@@ -1444,7 +1445,8 @@ def are_neighbor_cells(origin: str, destination: str) -> bool:
     """Whether two cells share an edge.
 
     Edge adjacency only; cells meeting at a single vertex are not neighbours,
-    which is what separates criterion 6 from the Chebyshev disk of criterion 7.
+    which is what separates this relation from the Chebyshev disk, where
+    meeting at a vertex is enough.
 
     Asked from both sides, because a cell in the geometric exception set can
     name a neighbour that cannot name it back with a single step: a trapezoid

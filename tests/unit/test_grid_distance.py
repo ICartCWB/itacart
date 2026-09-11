@@ -6,8 +6,8 @@ relation ``grid_disk`` and ``are_neighbor_cells`` already answer to, so a
 disagreement is a real disagreement between two parts of the package
 rather than between the package and an opinion about it.
 
-Three families of defect are named below because each one survived a
-phase by being invisible to the instruments then in use: refinement codes
+Three families of defect are named below because each one survives by
+being invisible to an instrument that does not look for it: refinement codes
 of a triangle read as a square grid, the eastern shear applied west of the
 meridian, and the quadrant prefix taken for the side of the line.
 """
@@ -32,7 +32,7 @@ from itacart.exceptions import DomainError
 #:
 #: What this domain excludes is as much a part of it: the last addressable
 #: column of a row, and the rows nearest the pole. Both are measured and both
-#: are wrong, pinned below rather than left to a handoff.
+#: are wrong, pinned below rather than left to a note.
 WINDOW = 5
 
 

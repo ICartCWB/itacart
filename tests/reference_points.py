@@ -1,9 +1,9 @@
 """Named geographic points shared by the test suite and the notebooks.
 
 Plain data, no ``pytest`` import: a notebook cannot consume a fixture, and
-the F1 brief requires the notebook and the tests to exercise **the same**
-points. A fixture that diverges from the notebook is how an error passes
-the test and shows up in the plot, or the other way round.
+the notebooks and the tests must exercise **the same** points. A fixture
+that diverges from the notebook is how an error passes the test and shows
+up in the plot, or the other way round.
 
 ``tests/conftest.py`` should re-export these through its geographic
 fixtures rather than restating the coordinates.
@@ -64,7 +64,8 @@ ROUNDTRIP_POINTS: Final[tuple[str, ...]] = (
 
 Excludes the poles, where the parallel circle collapses and longitude is
 not recoverable, and the antemeridian point, whose longitude round-trips
-to the same value only up to the sign convention chosen in F4.
+to the same value only up to the sign convention :mod:`itacart.boundary`
+chooses.
 """
 
 NEAR_ANTIPODAL_PAIRS: Final[tuple[tuple[str, tuple[float, float]], ...]] = (
@@ -76,8 +77,8 @@ NEAR_ANTIPODAL_PAIRS: Final[tuple[tuple[str, tuple[float, float]], ...]] = (
 )
 """Second endpoints of pairs starting at ``origin``, of growing separation.
 
-Used to locate the frontier where the Vincenty inverse stops converging
-(acceptance criterion 5). The frontier itself is measured, not asserted:
+Used to locate the frontier where the Vincenty inverse stops converging.
+The frontier itself is measured, not asserted:
 what the test pins is that beyond it the failure is a
 ``ConvergenceError`` and not a plausible number.
 """

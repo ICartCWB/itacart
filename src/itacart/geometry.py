@@ -285,6 +285,36 @@ def _closes_at_a_pole(geometry: "BaseGeometry") -> bool:
     return bool(max_lat >= 90.0 - slack or min_lat <= -90.0 + slack)
 
 
+def _refuse_invalid_area(geometry: "BaseGeometry") -> None:
+    """Refuse a polygon or multipolygon that is not a valid geometry.
+
+    Validity is a property of the geometry as the caller wrote it, not of
+    where it lies, so it is asked before any screen, clip or fill reads the
+    geometry. Asked any later, an invalid outline is treated according to
+    what the machinery happens to do with it: the quadrant split refuses a
+    bowtie, while a polygon with a zero-width spike past the antemeridian
+    passes the extension screen, which reads a part with no area as a
+    polygon touching the far edge of a zone, and is filled from its valid
+    remainder.
+
+    Nothing is repaired. A zero-width buffer or ``make_valid`` would decide
+    which area was meant -- one lobe of a bowtie or both, or a line where a
+    polygon collapsed -- and that decision belongs to the caller.
+
+    Geometries without area are not asked. A line that crosses itself is a
+    valid line, and points and lines keep contracts of their own.
+    """
+    if geometry.geom_type in {"Polygon", "MultiPolygon"} and not geometry.is_valid:
+        from shapely.validation import explain_validity
+
+        raise GeometryError(
+            f"the {geometry.geom_type} is not a valid geometry "
+            f"({explain_validity(geometry)}); an invalid areal geometry is "
+            "refused rather than repaired, because a repair would decide "
+            "which area was meant"
+        )
+
+
 def _refuse_unzoned_extension(geometry: "BaseGeometry") -> None:
     """Refuse longitude past the line that no extension zone legitimises.
 
@@ -293,12 +323,10 @@ def _refuse_unzoned_extension(geometry: "BaseGeometry") -> None:
     written past the line anywhere else names ground the grid does not
     address, and it is refused here, by the antemeridian's own name.
 
-    It used to be refused by accident. Such a footprint projects into
-    the western quadrant at a column past the end of its row, which is
-    the last lattice column, and the fill refused that column outright
-    -- so the guarantee about the line was resting on a limitation about
-    absorbing cells. When the fill learned to descend that column the
-    guarantee went with it. This is the rule standing on its own.
+    The rule has to be stated here rather than left to the fill. Such a
+    footprint projects into the western quadrant at a column past the end
+    of its row, which is the last lattice column, and the fill descends
+    that column like any other: nothing further on would refuse it.
 
     The legitimate region is the lifted window itself, so the two cannot
     drift: :func:`_lift_extensions` moves a zone's ground east by a full
@@ -324,8 +352,6 @@ def _refuse_unzoned_extension(geometry: "BaseGeometry") -> None:
         return
     inside_the_line = box(-edge, -90.0, edge, 90.0)
     past = geometry.difference(inside_the_line)
-    if past.is_empty:
-        return
     allowed = unary_union(
         [
             translate(window, xoff=2.0 * ANTEMERIDIAN_LON)
@@ -340,10 +366,6 @@ def _refuse_unzoned_extension(geometry: "BaseGeometry") -> None:
 
     if stray.is_empty:
         return
-    if geometry.geom_type in {"Polygon", "MultiPolygon"} and (
-        stray.geom_type in _NON_AREAL
-    ):
-        return  # touching the far edge of a zone, not reaching past it
     raise AntemeridianError(
         "geometry reaches past 180 degrees longitude where no extension "
         "zone carries the domain; only the Fiji and Chukotka rows are "
@@ -738,21 +760,22 @@ def _base_cells(
                 continue
             try:
                 _check_addressable(quadrant, column, row)
-            except (DomainError, NonExistentCellError) as exc:
+            except NonExistentCellError:
+                # Only the last lattice column is refused here. The other
+                # refusals of _check_addressable concern a whole row -- past
+                # the pole, a parallel shorter than one cell, the polar row
+                # -- and none of those rows offers a positive column, so the
+                # filter above has already dropped them. Anything else
+                # propagates. The last column is walked rather than refused:
+                # it absorbs the strip between its square and the domain
+                # border, and _fill_border_node descends the tree the
+                # hierarchy proved for it.
                 band = _anomalous_band(quadrant, column, row, cell_size(resolution))
                 if band.is_empty or not prepared.intersects(band):
                     out.append((column, row, False))
                     continue
-                # The last lattice column is walked rather than refused:
-                # it absorbs the strip between its square and the domain
-                # border, and _fill_border_node descends the tree the
-                # hierarchy proved for it. The polar row still raises --
-                # it is refused earlier, by the antemeridian screen, and
-                # is a separate delivery.
-                if isinstance(exc, NonExistentCellError):
-                    out.append((column, row, True))
-                    continue
-                raise
+                out.append((column, row, True))
+                continue
             out.append((column, row, False))
     return out
 
@@ -772,10 +795,9 @@ def _auto_segment(resolution: int) -> float:
     ``d = sqrt(4 R l)``. At resolution 7 that is about sixteen kilometres,
     at resolution 13 about five hundred metres.
 
-    The result is capped at one kilometre, the blanket threshold the
-    briefing already fixed, so this rule is never looser than the
-    project's standing decision and is stricter wherever the cell asks
-    for it.
+    The result is capped at one kilometre, the default segment of
+    :func:`densify_orthodromic`, so this rule is never looser than that
+    blanket threshold and is stricter wherever the cell asks for it.
     """
     from .constants import WGS84_A
 
@@ -858,8 +880,9 @@ class _Budget:
         self.spent += cells
         if self.spent > MAX_FILL_CELLS:
             raise GeometryError(
-                f"fill exceeded {MAX_FILL_CELLS} cells; pass compact=True, "
-                "or fill a smaller geometry. A coarser resolution is a last "
+                f"fill exceeded {MAX_FILL_CELLS} cells; pass compact=True where "
+                "the geometry stays clear of the border-absorbing cells, which "
+                "refuse it, or fill a smaller geometry. A coarser resolution is a last "
                 "resort: in cadastral use the resolution is prescribed by the "
                 "mapping scale and is not the caller's to lower"
             )
@@ -1075,7 +1098,7 @@ def _count_border_node(
     level: int,
     target: int,
     containment: Containment,
-    remaining: int,
+    remaining: int | None,
 ) -> int:
     """Count the target cells under one absorbing node, exactly.
 
@@ -1085,11 +1108,15 @@ def _count_border_node(
     10 000: a seven-to-the-depth ceiling refuses fills that fit, and a
     ``d`` -to-the-depth one accepts fills that cannot be materialised.
 
-    ``remaining`` is what the budget has left. The walk stops as soon as
-    the running total passes it, so an oversized fill is refused without
-    walking the rest of the tree. The point of the pre-count is to keep
-    the output under the ceiling, not to keep the walk constant-time --
-    that was only ever possible because the uniform tree had a formula.
+    ``remaining`` is what the fill's budget has left. The walk stops as
+    soon as the running total passes it, so an oversized fill is refused
+    without walking the rest of the tree. The point of the pre-count is to
+    keep the output under the ceiling, not to keep the walk constant-time
+    -- that was only ever possible because the uniform tree had a formula.
+
+    ``None`` is for :func:`count_internal_cells`, which names no cell and
+    so has no budget to protect. Stopping there would return the partial
+    total at the moment of passing the ceiling, as if it were the count.
     """
     from .boundary import absorbs_border
 
@@ -1113,12 +1140,12 @@ def _count_border_node(
                 level + 1,
                 target,
                 containment,
-                remaining - total,
+                None if remaining is None else remaining - total,
             )
         else:
             u0, v0, side = walk.square(child, level + 1)
             total += _count_node(prepared, u0, v0, side, level + 1, target, containment)
-        if total > remaining:
+        if remaining is not None and total > remaining:
             return total
     return total
 
@@ -1196,8 +1223,8 @@ def _fill_border_root(
     if compact:
         raise GeometryError(
             "compact=True is not available over the border-absorbing "
-            "family yet; the fold rule reads a uniform tree and this "
-            "family does not have one. Pass compact=False"
+            "family: the fold rule reads a uniform tree, and this family "
+            "does not have one. Pass compact=False"
         )
     walk = _BorderWalk(quadrant, sheared=sheared)
     root = (
@@ -1495,20 +1522,18 @@ def _meridian_rows(plane: "BaseGeometry") -> list[tuple[str, int]]:
     whether the triangle is actually met. The strip is clipped first so
     that a geometry nowhere near the line offers nothing at all.
 
-    A row past the pole is left out, and so is one that addresses no
-    column in its own quadrant. The polar row is offered: ``_base_cells``
-    skips column zero on purpose, because that column names the meridian
-    triangle this walk is here to reach, and the cap is column zero of
-    its row -- so if this walk does not offer it, nothing does.
+    No row past the pole is offered, and none without a column, and the
+    walk does not check for either: a latitude past 90 degrees is refused
+    before anything is projected, the pole projects into the polar row,
+    and every eastern row up to that one addresses the meridian column.
 
-    The two clauses used to be a pair of ``last_lattice_column(...) <= 0``
-    tests, one on the row and one on the row above. That answer
-    saturates: it is zero for row 1000, which holds one cell in an
-    eastern quadrant, and zero again for row 1001, which holds none. The
-    pair skipped row 999 on the second test and row 1000 on the first,
-    so the walk stopped two rows below the pole and the cap was never
-    offered to anything. The prepared geometry was never the problem: it
-    coincides with ``plane_ring`` to the digit.
+    The polar row is offered: ``_base_cells`` skips column zero on
+    purpose, because that column names the meridian triangle this walk is
+    here to reach, and the cap is column zero of its row -- so if this
+    walk does not offer it, nothing does. No test on
+    ``last_lattice_column`` could stand in for the range: that answer
+    saturates at zero, for row 1000, which holds one cell in an eastern
+    quadrant, and again for row 1001, which holds none.
     """
     from shapely.geometry import box
 
@@ -1531,13 +1556,6 @@ def _meridian_rows(plane: "BaseGeometry") -> list[tuple[str, int]]:
         for row in range(
             max(int(math.floor(first / _L1)), 0), int(math.floor(last / _L1)) + 1
         ):
-            quadrant = hemisphere + "E"
-            if row > _POLAR_ROW:
-                continue
-            if last_lattice_column(quadrant, row, _L1) < _first_lattice_column(
-                quadrant
-            ):
-                continue
             out.append((hemisphere, row))
     return out
 
@@ -1605,6 +1623,7 @@ def _prepare(
 
     if geometry.is_empty:
         return geometry, []
+    _refuse_invalid_area(geometry)
     if crosses_antemeridian(geometry) and not _closes_at_a_pole(geometry):
         raise AntemeridianError(
             "geometry crosses 180 degrees longitude outside an extension "
@@ -1723,15 +1742,19 @@ def polyfill(
     **Every family is filled.** The last lattice column of a row, which
     absorbs the border strip, the polar row and the two caps are not the
     sheared square the descent tests, and each is walked by a descent of
-    its own rather than refused. An earlier version of this function
-    refused the first two, and said so here as a gap in the function
-    rather than a property of the grid; the gap is closed.
+    its own rather than refused.
 
     **A geometry without area fills nothing under an areal predicate.**
     ``center`` and ``contains`` keep a cell by its relation to an area, so
-    a point, a line or a collapsed polygon keeps no cell under them, and
-    the refusal says that rather than guessing the geometry was empty.
-    ``intersects`` keeps the cells such a geometry touches.
+    a point or a line keeps no cell under them, and the refusal says that
+    rather than guessing the geometry was empty. ``intersects`` keeps the
+    cells such a geometry touches.
+
+    **An areal geometry must be valid.** A polygon or multipolygon that is
+    not a valid geometry is refused before anything reads it, with the
+    reason the geometry engine gives, and is never repaired: validity
+    belongs to the geometry as written, not to where it lies. Geometries
+    without area are not asked.
 
     Args:
         geometry: A Shapely geometry in EPSG:4326.
@@ -1741,7 +1764,10 @@ def polyfill(
             same index as compacting the uniform fill afterwards with
             :func:`itacart.hierarchy.compact_cells` under the same
             containment mode. Returns a mixed-resolution index instead of a
-            uniform one.
+            uniform one. Refused where the fill walks the border-absorbing
+            family -- where the geometry meets the strip the last lattice
+            column of a row absorbs, or a polar cap -- because the fold
+            reads a uniform tree and that family has none.
         n_jobs: Worker count; above 1 spreads base cells over threads.
 
     Returns:
@@ -1751,10 +1777,13 @@ def polyfill(
         AntemeridianError: If the geometry crosses 180 degrees outside an
             extension zone.
         UnsupportedGeometryTypeError: On unsupported geometry types.
-        GeometryError: If the fill exceeds :data:`MAX_FILL_CELLS`, or if it
-            keeps no cell: the geometry is empty, it has no area under
-            ``center`` or ``contains``, or it is narrower than one cell
-            under the chosen mode. The message names which.
+        DomainError: If a position lies outside the latitude domain.
+        GeometryError: If a polygon or multipolygon is not a valid
+            geometry, if the fill exceeds :data:`MAX_FILL_CELLS`, if
+            ``compact=True`` meets the border-absorbing family, or if it
+            keeps no cell: the geometry is empty, it has no area under ``center``
+            or ``contains``, or it is narrower than one cell under the
+            chosen mode. The message names which.
     """
     _check_resolution(resolution)
     _check_jobs(n_jobs)
@@ -1930,12 +1959,15 @@ def count_internal_cells(polygon: "Polygon", resolution: int, n_jobs: int = 1) -
     perimeter then determine the residual, which is an outcome to be
     reported against the bound above, not a target to refine toward.
 
-    **Limitation, not a rule.** The same two families :func:`polyfill`
-    refuses are refused here, and it is the same gap: the count walks the
-    squares the fill walks, so a family the fill cannot descend cannot be
-    counted either. The prime-meridian column is counted by a walk of its
-    own, and the other two await one. See :func:`polyfill` for why this
-    is a property of the walk rather than of the grid.
+    **Every family is counted.** The last lattice column of a row, the
+    polar row and the two caps are not the sheared square the closed form
+    counts, so their trees are walked -- ring by ring inside the family,
+    in closed form wherever a branch leaves it -- and the prime-meridian
+    column is counted by a walk of its own. None of those walks stops at
+    :data:`MAX_FILL_CELLS`. That ceiling keeps a fill from naming more
+    cells than can be materialised, and a count names none: stopping there
+    would return the running total at the moment of passing it as though
+    it were the count.
 
     Provenance: ``itacart_core/cell_filling.py``
     (``polygon_to_cells_count``).
@@ -1951,9 +1983,9 @@ def count_internal_cells(polygon: "Polygon", resolution: int, n_jobs: int = 1) -
     Raises:
         AntemeridianError: If the polygon crosses 180 degrees outside an
             extension zone.
-        NonExistentCellError: If the polygon reaches a border-absorbing
-            column.
-        DomainError: If the polygon reaches the polar row.
+        DomainError: If a position lies outside the latitude domain.
+        GeometryError: If the polygon is not a valid geometry; it is refused,
+            not repaired.
     """
     _check_resolution(resolution)
     _check_jobs(n_jobs)
@@ -1979,7 +2011,7 @@ def count_internal_cells(polygon: "Polygon", resolution: int, n_jobs: int = 1) -
                     1,
                     resolution,
                     "center",
-                    MAX_FILL_CELLS,
+                    None,
                 )
             return _count_node(
                 _v.prepared, (column + row) * _L1, row * _L1, _L1, 1, resolution
@@ -2007,7 +2039,7 @@ def count_internal_cells(polygon: "Polygon", resolution: int, n_jobs: int = 1) -
                     1,
                     resolution,
                     "center",
-                    MAX_FILL_CELLS,
+                    None,
                 )
                 continue
             total += _count_meridian_node(

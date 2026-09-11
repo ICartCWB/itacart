@@ -3,8 +3,8 @@
 A fixture that declares one resolution and carries another is not an
 inert typo: a test reading the declaration and asserting against the
 string proves nothing, and the discrepancy survives every green run.
-``sydney_cell`` carried one from F1 to F7, was reported twice, and was
-corrected pointwise once without the class of error being closed.
+``sydney_cell`` carried one unnoticed across the suite, and a pointwise
+correction did not close the class of error.
 
 So the check is an invariant over the whole conftest rather than an
 assertion about one fixture. It reads the source with ``ast``, which

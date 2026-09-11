@@ -515,11 +515,9 @@ def _quantize_points(drawn: BaseGeometry, resolution: int) -> str:
 def to_geodataframe(index: str, crs: str = "EPSG:4326") -> "geopandas.GeoDataFrame":
     """Export a compositional index as a GeoDataFrame.
 
-    Requires the ``geo`` extra. Installing it brings ``pyproj`` back
-    transitively, which does not undo the removal of ``pyproj`` from the
-    package: the package itself still computes its geodesy directly, and this
-    is an optional extra pulling in a reprojection library for the caller's
-    benefit.
+    Requires the ``geo`` extra, which brings ``pyproj`` in transitively. The
+    package does not depend on it: its geodesy is computed directly, and the
+    extra pulls in a reprojection library for the caller's benefit only.
 
     Args:
         index: Compositional index.

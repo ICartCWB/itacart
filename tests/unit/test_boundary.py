@@ -1,4 +1,4 @@
-"""Tests for :mod:`itacart.boundary`, one section per acceptance criterion.
+"""Tests for :mod:`itacart.boundary`, one section per property.
 
 The module carries OGC DGGS Core requirements 8, 9 and 10 on its own, so
 the tests are written as properties over enumerated families wherever the
@@ -38,7 +38,7 @@ def plane_polygon(cell: str) -> Polygon:
     The plane is where the cell's edges are straight and its area is the
     true ellipsoidal one. Testing containment in longitude and latitude
     instead would measure the chord error of an undensified edge, which
-    is F7's subject and not this module's.
+    belongs to densification in :mod:`itacart.geometry`, not to this module.
     """
     return Polygon(boundary.plane_ring(cell)[1])
 
@@ -90,15 +90,13 @@ def test_the_column_limit_agrees_with_a_walk_along_the_row(
 
 
 # --------------------------------------------------------------------------
-# Criterion 1 -- the prime-meridian triangle
+# The prime-meridian triangle
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("quadrant", ["NE", "SE"])
 @pytest.mark.parametrize("row", [0, 1, 137, 500, 999])
-def test_criterion_1_the_meridian_cell_is_an_isosceles_triangle(
-    quadrant: str, row: int
-) -> None:
+def test_the_meridian_cell_is_an_isosceles_triangle(quadrant: str, row: int) -> None:
     """Base twice the height, mirrored about the meridian, three vertices."""
     cell = f"{quadrant}(0000/{row:04d})"
     shape, ring = boundary.plane_ring(cell)
@@ -117,7 +115,7 @@ def test_criterion_1_the_meridian_cell_is_an_isosceles_triangle(
 
 
 @pytest.mark.parametrize("resolution", range(1, 14))
-def test_criterion_1_the_triangle_carries_the_nominal_area(resolution: int) -> None:
+def test_the_triangle_carries_the_nominal_area(resolution: int) -> None:
     """Base ``2l`` and height ``l``, halved, is ``l * l``.
 
     This is the whole reason the paper chose a triangle: it has
@@ -139,7 +137,7 @@ def test_criterion_1_the_triangle_carries_the_nominal_area(resolution: int) -> N
     assert effective_cell_area(cell) == nominal_cell_area(resolution)
 
 
-def test_criterion_1_the_triangle_tiles_its_row_with_no_gap_or_overlap() -> None:
+def test_the_triangle_tiles_its_row_with_no_gap_or_overlap() -> None:
     """The triangle is exactly the two half-columns it replaces.
 
     Its eastern edge is the western edge of ``NE(0001/Y)`` and its
@@ -159,12 +157,12 @@ def test_criterion_1_the_triangle_tiles_its_row_with_no_gap_or_overlap() -> None
 
 
 # --------------------------------------------------------------------------
-# Criterion 2 -- finer resolutions create no western cells
+# Finer resolutions create no western cells
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("level", [2, 3, 4, 5])
-def test_criterion_2_triangle_children_partition_their_parent(level: int) -> None:
+def test_triangle_children_partition_their_parent(level: int) -> None:
     """One triangle per sub-row, parallelograms beside it, and no gap.
 
     The triangle is a local anomaly of the meridian line, not a shape
@@ -200,7 +198,7 @@ def test_criterion_2_triangle_children_partition_their_parent(level: int) -> Non
 
 
 @pytest.mark.parametrize("quadrant", ["NE", "SE"])
-def test_criterion_2_every_triangle_points_at_the_pole(quadrant: str) -> None:
+def test_every_triangle_points_at_the_pole(quadrant: str) -> None:
     """Base toward the equator, apex toward the pole, at every resolution.
 
     The refinement never produces an inverted triangle. Figure 4(b) of
@@ -223,7 +221,7 @@ def test_criterion_2_every_triangle_points_at_the_pole(quadrant: str) -> None:
         cell = descend(cell, refinement_alphabet(level)[0])
 
 
-def test_criterion_2_the_diagonal_children_straddle_the_meridian() -> None:
+def test_the_diagonal_children_straddle_the_meridian() -> None:
     """The fold of Figure 4(c) closes: ``A1``..``E5`` are meridian cells.
 
     The children whose grid row and column agree are centred on the line,
@@ -242,7 +240,7 @@ def test_criterion_2_the_diagonal_children_straddle_the_meridian() -> None:
     assert straddling == {"A1", "B2", "C3", "D4", "E5"}
 
 
-def test_criterion_2_the_fold_is_a_bijection_in_both_alphabets() -> None:
+def test_the_fold_is_a_bijection_in_both_alphabets() -> None:
     """Every grid cell reaches one position and every position one cell.
 
     The fold reads Figure 4(c): sub-row ``min(i, j)``, offset ``j - i``
@@ -269,22 +267,20 @@ def test_criterion_2_the_fold_is_a_bijection_in_both_alphabets() -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 3 -- is_valid_cell
+# Is_valid_cell
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("quadrant", ["NW", "SW"])
 @pytest.mark.parametrize("row", [0, 1, 400, 999])
-def test_criterion_3_the_western_meridian_column_does_not_exist(
-    quadrant: str, row: int
-) -> None:
+def test_the_western_meridian_column_does_not_exist(quadrant: str, row: int) -> None:
     """ "Cells in resolution 1 with the X index equal to 0 in the western
     quadrants will be non-existent"."""
     assert boundary.is_valid_cell(f"{quadrant}(0000/{row:04d})") is False
     assert boundary.is_valid_cell(f"{quadrant}(0001/{row:04d})") is True
 
 
-def test_criterion_3_the_column_limit_shrinks_with_the_cosine() -> None:
+def test_the_column_limit_shrinks_with_the_cosine() -> None:
     """The resolution-1 index space is not the rectangle Table 1 quotes.
 
     ``RES1_MAX_INDEX`` transcribes the table correctly and names the
@@ -322,25 +318,25 @@ def test_criterion_3_the_column_limit_shrinks_with_the_cosine() -> None:
         cells.cell_to_anchor("NE(2003/1000)")
 
 
-def test_criterion_3_a_malformed_index_is_answered_not_raised_on() -> None:
+def test_a_malformed_index_is_answered_not_raised_on() -> None:
     """The predicate composes: syntax failure is ``False``, never an exception."""
     assert boundary.is_valid_cell("NE(0000/0000") is False
     assert boundary.is_valid_cell("XX(0001/0001)") is False
     assert boundary.is_valid_cell("NE(0001/0001(9))") is False
 
 
-def test_criterion_3_a_bare_quadrant_is_valid() -> None:
+def test_a_bare_quadrant_is_valid() -> None:
     """Resolution 0 is a cell of the grid, and all four of them exist."""
     assert boundary.is_valid_cell("NE") is True
     assert boundary.is_valid_cell("SW") is True
 
 
 # --------------------------------------------------------------------------
-# Criterion 4 -- extension_zone_for_point
+# Extension_zone_for_point
 # --------------------------------------------------------------------------
 
 
-def test_criterion_4_named_positions_classify_as_the_paper_names_them(
+def test_named_positions_classify_as_the_paper_names_them(
     suva: tuple[float, float],
     wrangel: tuple[float, float],
     central_pacific: tuple[float, float],
@@ -350,7 +346,7 @@ def test_criterion_4_named_positions_classify_as_the_paper_names_them(
     assert boundary.extension_zone_for_point(*central_pacific) is None
 
 
-def test_criterion_4_the_band_alone_is_not_enough() -> None:
+def test_the_band_alone_is_not_enough() -> None:
     """Inside the latitude band but past the limit is not inside the zone.
 
     The Chukotka extension reaches 169.5 degrees west. A position further
@@ -514,18 +510,18 @@ class TestExtensionZoneCensus:
         assert boundary._lon_limit("NE", 750) == pytest.approx(190.5)
 
 
-def test_criterion_4_the_zones_do_not_reach_the_wrong_hemisphere() -> None:
+def test_the_zones_do_not_reach_the_wrong_hemisphere() -> None:
     """Fiji governs a southern band and Chukotka a northern one."""
     assert boundary.extension_zone_for_point(179.0, 18.0) is None
     assert boundary.extension_zone_for_point(179.0, -68.0) is None
 
 
 # --------------------------------------------------------------------------
-# Criterion 5 -- the limits of Figure 5
+# The limits of Figure 5
 # --------------------------------------------------------------------------
 
 
-def test_criterion_5_the_published_limits_are_reproduced() -> None:
+def test_the_published_limits_are_reproduced() -> None:
     """Fiji to 178 W between 15.5 S and 21.5 S; Chukotka to 169.5 W between
     64 N and 72 N."""
     assert boundary.extension_bounds("FIJI") == (-180.0, -21.5, -178.0, -15.5)
@@ -533,7 +529,7 @@ def test_criterion_5_the_published_limits_are_reproduced() -> None:
 
 
 @pytest.mark.parametrize("zone", ["FIJI", "CHUKOTKA"])
-def test_criterion_5_every_limit_is_a_multiple_of_the_adopted_precision(
+def test_every_limit_is_a_multiple_of_the_adopted_precision(
     zone: str,
 ) -> None:
     """ "We adopted a precision of 0.5 degrees" -- and it shows in all six.
@@ -552,17 +548,17 @@ def test_criterion_5_every_limit_is_a_multiple_of_the_adopted_precision(
     assert minimum_lon == -ANTEMERIDIAN_LON
 
 
-def test_criterion_5_an_undefined_zone_is_refused() -> None:
+def test_an_undefined_zone_is_refused() -> None:
     with pytest.raises(ValueError, match="not a defined extension zone"):
         boundary.extension_bounds("ATLANTIS")  # type: ignore[arg-type]
 
 
 # --------------------------------------------------------------------------
-# Criterion 6 -- effective area against nominal
+# Effective area against nominal
 # --------------------------------------------------------------------------
 
 
-def test_criterion_6_a_trapezoid_is_not_an_equal_area_cell() -> None:
+def test_a_trapezoid_is_not_an_equal_area_cell() -> None:
     """Clipped cells lose the guarantee, and say so before they are measured."""
     cell = "NE(2003/0000)"
     assert boundary.cell_shape(cell) == "trapezoid"
@@ -571,7 +567,7 @@ def test_criterion_6_a_trapezoid_is_not_an_equal_area_cell() -> None:
     assert effective_cell_area(cell) != nominal_cell_area(1)
 
 
-def test_criterion_6_the_triangle_keeps_the_guarantee() -> None:
+def test_the_triangle_keeps_the_guarantee() -> None:
     """The exception the paper declares is the antemeridian, not the meridian.
 
     "Preserving equal areas for all cells, with the exception of the
@@ -592,7 +588,7 @@ def _resolution_of(cell: str) -> int:
     return get_resolution(cell)
 
 
-def test_criterion_6_the_interior_is_untouched() -> None:
+def test_the_interior_is_untouched() -> None:
     """An ordinary cell far from any boundary carries the nominal area."""
     for cell in ("NE(1400/0374)", "SW(0476/0260)", "SE(0900/0200(3))"):
         assert boundary.cell_shape(cell) == "parallelogram"
@@ -601,7 +597,7 @@ def test_criterion_6_the_interior_is_untouched() -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 7 -- every position resolves to exactly one cell
+# Every position resolves to exactly one cell
 # --------------------------------------------------------------------------
 
 COVERAGE_POINTS: dict[str, tuple[float, float]] = {
@@ -632,7 +628,7 @@ COVERAGE_POINTS: dict[str, tuple[float, float]] = {
 
 @pytest.mark.parametrize("resolution", [1, 2, 3, 7, 13])
 @pytest.mark.parametrize("name", sorted(COVERAGE_POINTS))
-def test_criterion_7_every_named_position_resolves_to_exactly_one_cell(
+def test_every_named_position_resolves_to_exactly_one_cell(
     name: str, resolution: int
 ) -> None:
     """Enumerated, not sampled, and the enumeration names what it covers.
@@ -667,7 +663,7 @@ CHORD_SAGITTA_M = 10.0
 
 
 @pytest.mark.parametrize("resolution", [1, 2, 3])
-def test_criterion_7_neighbouring_columns_do_not_overlap(resolution: int) -> None:
+def test_neighbouring_columns_do_not_overlap(resolution: int) -> None:
     """Uniqueness, stated as a property over a whole row rather than a point."""
     row = "0400"
     polygons = [
@@ -684,7 +680,7 @@ def test_criterion_7_neighbouring_columns_do_not_overlap(resolution: int) -> Non
 
 
 # --------------------------------------------------------------------------
-# Criterion 8 -- vertex counts
+# Vertex counts
 # --------------------------------------------------------------------------
 
 
@@ -692,7 +688,7 @@ def test_criterion_7_neighbouring_columns_do_not_overlap(resolution: int) -> Non
     "cell",
     ["NE(0000/0500)", "SE(0000/0500)", "NW(0001/0500)", "SW(0001/0500)"],
 )
-def test_criterion_8_the_ring_is_counter_clockwise_in_every_quadrant(
+def test_the_ring_is_counter_clockwise_in_every_quadrant(
     cell: str,
 ) -> None:
     """Mirroring reverses orientation; the sequence is reversed back."""
@@ -701,7 +697,7 @@ def test_criterion_8_the_ring_is_counter_clockwise_in_every_quadrant(
 
 
 @pytest.mark.parametrize("quadrant", ["NE", "NW", "SE", "SW"])
-def test_criterion_8_a_trapezoid_ring_is_counter_clockwise(quadrant: str) -> None:
+def test_a_trapezoid_ring_is_counter_clockwise(quadrant: str) -> None:
     """Absorption must not flip the winding, in any quadrant.
 
     The sibling test above checks parallelograms and triangles, whose
@@ -729,7 +725,7 @@ def test_criterion_8_a_trapezoid_ring_is_counter_clockwise(quadrant: str) -> Non
 
 
 @pytest.mark.parametrize("quadrant", ["NE", "NW", "SE", "SW"])
-def test_criterion_8_the_polar_triangle_ring_is_counter_clockwise(
+def test_the_polar_triangle_ring_is_counter_clockwise(
     quadrant: str,
 ) -> None:
     """The polar cell too, whose apex the border has collapsed to a point.
@@ -746,13 +742,13 @@ def test_criterion_8_the_polar_triangle_ring_is_counter_clockwise(
 
 
 @pytest.mark.parametrize("quadrant", ["NE", "SE"])
-def test_criterion_8_a_triangle_has_three_vertices(quadrant: str) -> None:
+def test_a_triangle_has_three_vertices(quadrant: str) -> None:
     cell = f"{quadrant}(0000/0500)"
     assert len(cells.cell_to_boundary(cell)) == 3
     assert len(cells.cell_to_boundary(cell, close=True)) == 4
 
 
-def test_criterion_8_a_trapezoid_has_four_vertices() -> None:
+def test_a_trapezoid_has_four_vertices() -> None:
     """Four, always. The border is absorbed, not cut.
 
     Figure 6's construction moves the outer side onto the border at both
@@ -794,7 +790,7 @@ def _bases_of(cell: str) -> tuple[float, float]:
     return width(min(ordinates, key=abs)), width(max(ordinates, key=abs))
 
 
-def test_criterion_8_the_two_bases_differ_by_the_lean_minus_the_retreat() -> None:
+def test_the_two_bases_differ_by_the_lean_minus_the_retreat() -> None:
     """``upper - lower == s - db``, to the last bit, in every row.
 
     The cell's outer side is carried onto the border at both ordinates, so
@@ -816,8 +812,8 @@ def test_criterion_8_the_two_bases_differ_by_the_lean_minus_the_retreat() -> Non
     assert worst < 1e-12
 
 
-def test_criterion_8_which_base_is_longer_changes_sides_at_the_slope_crossing() -> None:
-    """The working statement of the phase was too strong, and this is what holds.
+def test_which_base_is_longer_changes_sides_at_the_slope_crossing() -> None:
+    """The obvious statement is too strong, and this is what holds.
 
     "Exactly one base extends past the nominal side; the other is
     necessarily shorter" is what ``NE(2003/0000)`` does. It is not the
@@ -846,7 +842,7 @@ def test_criterion_8_which_base_is_longer_changes_sides_at_the_slope_crossing() 
     assert crossing == pytest.approx(18.5332, abs=1e-4)
 
 
-def test_criterion_8_every_trapezoid_on_the_globe_has_four_vertices() -> None:
+def test_every_trapezoid_on_the_globe_has_four_vertices() -> None:
     """Enumerated over every resolution-1 row, not sampled.
 
     The family of boundary cells has practically zero measure against the
@@ -874,7 +870,7 @@ def test_criterion_8_every_trapezoid_on_the_globe_has_four_vertices() -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 9 -- cell_to_polygon in all three shapes
+# Cell_to_polygon in all three shapes
 # --------------------------------------------------------------------------
 
 
@@ -889,7 +885,7 @@ def test_criterion_8_every_trapezoid_on_the_globe_has_four_vertices() -> None:
         "NE(0000/1000)",
     ],
 )
-def test_criterion_9_the_polygon_is_valid_and_closed_in_all_three_shapes(
+def test_the_polygon_is_valid_and_closed_in_all_three_shapes(
     cell: str,
 ) -> None:
     polygon = cells.cell_to_polygon(cell)
@@ -909,14 +905,14 @@ def test_criterion_9_the_polygon_is_valid_and_closed_in_all_three_shapes(
         "SE(0171/0100)",
     ],
 )
-def test_criterion_9_the_measured_area_matches_the_reported_one(cell: str) -> None:
+def test_the_measured_area_matches_the_reported_one(cell: str) -> None:
     """Within 0.01 percent, measured on the plane the projection preserves."""
     measured = plane_polygon(cell).area
     reported = effective_cell_area(cell)
     assert measured == pytest.approx(reported, rel=1e-4)
 
 
-def test_criterion_9_a_cell_with_no_ground_under_it_is_refused() -> None:
+def test_a_cell_with_no_ground_under_it_is_refused() -> None:
     """Geometry for a non-existent cell is an error, not an empty polygon.
 
     Refused twice over, and the two refusals are not redundant. The entry
@@ -937,11 +933,11 @@ def test_criterion_9_a_cell_with_no_ground_under_it_is_refused() -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 10 -- anchor and centroid in all three shapes
+# Anchor and centroid in all three shapes
 # --------------------------------------------------------------------------
 
 
-def test_criterion_10_the_triangle_anchor_is_the_midpoint_of_its_base() -> None:
+def test_the_triangle_anchor_is_the_midpoint_of_its_base() -> None:
     """ "The cell index intersects with the prime meridian and functions as
     the midpoint of the base of an isosceles triangle."
 
@@ -960,15 +956,15 @@ def test_criterion_10_the_triangle_anchor_is_the_midpoint_of_its_base() -> None:
     assert plane[0] == pytest.approx((base[0][0] + base[1][0]) / 2.0)
 
 
-def test_criterion_10_the_parallelogram_anchor_is_still_its_lower_left() -> None:
-    """The rule the index encodes, unchanged by this phase."""
+def test_the_parallelogram_anchor_is_still_its_lower_left() -> None:
+    """The rule the index encodes, unchanged at the border."""
     assert cells.cell_to_sinusoidal("NE(0003/0007)") == (3 * L1, 7 * L1)
 
 
 @pytest.mark.parametrize(
     "cell", ["NE(1400/0374)", "NE(0000/0500)", "SE(0000/0500(3))", "NE(2003/0000)"]
 )
-def test_criterion_10_the_centroid_is_inside_its_own_cell(cell: str) -> None:
+def test_the_centroid_is_inside_its_own_cell(cell: str) -> None:
     """True of all three shapes, which the mean of the vertices would not be."""
     centroid = cells.cell_to_centroid(cell)
     zone = boundary.extension_zone_for_point(*centroid)
@@ -982,7 +978,7 @@ def test_criterion_10_the_centroid_is_inside_its_own_cell(cell: str) -> None:
     )
 
 
-def test_criterion_10_the_trapezoid_centroid_is_area_weighted() -> None:
+def test_the_trapezoid_centroid_is_area_weighted() -> None:
     """The shoelace centroid, not the mean of the vertices.
 
     They agree for a triangle and for a parallelogram and part company
@@ -1000,14 +996,14 @@ def test_criterion_10_the_trapezoid_centroid_is_area_weighted() -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 12 -- construction in longitude
+# Construction in longitude
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     ("zone", "quadrant", "row"), [("CHUKOTKA", "NE", 750), ("FIJI", "SE", 200)]
 )
-def test_criterion_12_the_eastern_quadrant_accepts_columns_past_the_normal_limit(
+def test_the_eastern_quadrant_accepts_columns_past_the_normal_limit(
     zone: str, quadrant: str, row: int
 ) -> None:
     """Inside a band the east reaches further, and stops at the zone's limit.
@@ -1040,7 +1036,7 @@ def test_criterion_12_the_eastern_quadrant_accepts_columns_past_the_normal_limit
 @pytest.mark.parametrize(
     ("zone", "quadrant", "row"), [("CHUKOTKA", "NE", 750), ("FIJI", "SE", 200)]
 )
-def test_criterion_12_the_column_past_the_zone_limit_is_refused(
+def test_the_column_past_the_zone_limit_is_refused(
     zone: str, quadrant: str, row: int
 ) -> None:
     last = _last_column(quadrant, row)
@@ -1053,7 +1049,7 @@ def test_criterion_12_the_column_past_the_zone_limit_is_refused(
     ("zone", "east", "west", "row"),
     [("CHUKOTKA", "NE", "NW", 750), ("FIJI", "SE", "SW", 200)],
 )
-def test_criterion_12_the_western_quadrant_gives_up_what_the_eastern_gains(
+def test_the_western_quadrant_gives_up_what_the_eastern_gains(
     zone: str, east: str, west: str, row: int
 ) -> None:
     """The extension moves a border; it does not duplicate ground.
@@ -1074,18 +1070,16 @@ def test_criterion_12_the_western_quadrant_gives_up_what_the_eastern_gains(
 
 
 # --------------------------------------------------------------------------
-# Criterion 13 -- construction in latitude, and the discontinuity F6 inherits
+# Construction in latitude, and the discontinuity topology meets
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(("zone", "quadrant"), [("CHUKOTKA", "NE"), ("FIJI", "SE")])
-def test_criterion_13_the_column_count_steps_at_the_band_edge(
-    zone: str, quadrant: str
-) -> None:
+def test_the_column_count_steps_at_the_band_edge(zone: str, quadrant: str) -> None:
     """The same column is accepted in one row and refused in the next.
 
-    This is the discontinuity F6 inherits: neighbouring rows hold
-    different numbers of columns, so a neighbour rule that assumes a
+    This is the discontinuity the neighbour rules meet: neighbouring rows
+    hold different numbers of columns, so a neighbour rule that assumes a
     constant row width is wrong here and only here.
     """
     first, last = boundary.ZONE_ROWS[zone]
@@ -1102,7 +1096,7 @@ def test_criterion_13_the_column_count_steps_at_the_band_edge(
 
 
 @pytest.mark.parametrize("zone", ["FIJI", "CHUKOTKA"])
-def test_criterion_13_the_band_is_realized_on_whole_rows(zone: str) -> None:
+def test_the_band_is_realized_on_whole_rows(zone: str) -> None:
     """No cell is split by a latitude limit, so none needs a stepped edge.
 
     The declared limits are multiples of half a degree and fall inside
@@ -1120,7 +1114,7 @@ def test_criterion_13_the_band_is_realized_on_whole_rows(zone: str) -> None:
 
 
 @pytest.mark.parametrize("zone", ["FIJI", "CHUKOTKA"])
-def test_criterion_13_the_declared_band_is_covered_by_the_realized_rows(
+def test_the_declared_band_is_covered_by_the_realized_rows(
     zone: str,
 ) -> None:
     """Every declared latitude lands in a row the zone owns."""
@@ -1135,14 +1129,14 @@ def test_criterion_13_the_declared_band_is_covered_by_the_realized_rows(
 
 
 # --------------------------------------------------------------------------
-# Criterion 14 -- only the border cell is a trapezoid
+# Only the border cell is a trapezoid
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     ("zone", "quadrant", "row"), [("CHUKOTKA", "NE", 750), ("FIJI", "SE", 200)]
 )
-def test_criterion_14_inside_the_zone_is_nominal_and_only_the_border_is_clipped(
+def test_inside_the_zone_is_nominal_and_only_the_border_is_clipped(
     zone: str, quadrant: str, row: int
 ) -> None:
     """Both cells are extension cells; only one of them is a trapezoid."""
@@ -1161,9 +1155,7 @@ def test_criterion_14_inside_the_zone_is_nominal_and_only_the_border_is_clipped(
 @pytest.mark.parametrize(
     ("quadrant", "row"), [("NE", 750), ("SE", 200), ("NE", 400), ("SW", 300)]
 )
-def test_criterion_14_a_cell_agrees_with_its_own_centroid(
-    quadrant: str, row: int
-) -> None:
+def test_a_cell_agrees_with_its_own_centroid(quadrant: str, row: int) -> None:
     """``extension_zone`` on a cell equals ``extension_zone_for_point`` on
     its centroid, and the row realization is what guarantees it."""
     for column in (1, 5, _last_column(quadrant, row)):
@@ -1177,7 +1169,7 @@ def test_criterion_14_a_cell_agrees_with_its_own_centroid(
 
 
 @pytest.mark.parametrize("row", [0, 100, 200, 465, 750, 900, 999])
-def test_criterion_14_exactly_one_cell_per_row_is_a_trapezoid(row: int) -> None:
+def test_exactly_one_cell_per_row_is_a_trapezoid(row: int) -> None:
     """ "Only the cell that meets the border", and now it holds everywhere.
 
     Under clipping it did not. A cell's outer side leans one column per
@@ -1201,7 +1193,7 @@ def test_criterion_14_exactly_one_cell_per_row_is_a_trapezoid(row: int) -> None:
     assert trapezoids == [last]
 
 
-def test_criterion_14_is_boundary_cell_is_the_coarse_screen() -> None:
+def test_is_boundary_cell_is_the_coarse_screen() -> None:
     """True for every discontinuity, and false in the plain interior."""
     assert boundary.is_boundary_cell("NE(0000/0500)") is True
     assert boundary.is_boundary_cell("NE(2003/0000)") is True
@@ -1319,7 +1311,8 @@ def test_the_children_of_a_trapezoid_exceed_it_by_the_chord_sagitta() -> None:
 
     Closing the gap would mean giving a boundary cell one edge per
     descendant, which contradicts the four-vertex rule the paper states.
-    It is recorded rather than removed, and ``F5`` and ``F7`` inherit it.
+    It is recorded rather than removed, and the hierarchy and the fill
+    inherit it.
     """
     for row in (0, 100, 465, 900):
         parent = f"NE({_last_column('NE', row):04d}/{row:04d})"

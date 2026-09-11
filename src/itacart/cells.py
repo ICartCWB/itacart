@@ -94,7 +94,7 @@ One micrometre: four orders of magnitude below the finest cell (1 cm) and
 well above the ~1e-9 m residual that a projection round trip leaves at
 continental distances. Without it a position recovered from its own cell
 anchor floors back into the previous cell, and ``geo_to_cell`` stops being
-idempotent on its own output -- which is acceptance criterion 1.
+idempotent on its own output.
 
 Ported verbatim from ``itacart_core/cells.py`` (``_EPS_M``). It is applied
 at three places and only three: the sheared column, the sheared row, and

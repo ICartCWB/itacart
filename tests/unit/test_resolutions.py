@@ -1,8 +1,6 @@
 """Unit tests for :mod:`itacart.resolutions`.
 
-Covers acceptance criteria 6 and 7 of F3.
-
-Table 1 is checked by two independent routes, as criterion 7 requires.
+Table 1 is checked by two independent routes.
 The literal transcription below is a *second witness*: it is typed from
 the published table rather than read from :mod:`itacart.constants`, so a
 mistyped constant fails here instead of agreeing with itself. The closed
@@ -48,12 +46,12 @@ SAMPLING_INTERVAL_M = 5e-4  # Tobler (1987), 0.5 mm on paper
 
 
 # ==========================================================================
-# Criterion 6 -- nominal_cell_area against Table 1
+# Nominal_cell_area against Table 1
 # ==========================================================================
 
 
 @pytest.mark.parametrize("resolution,_side,area,_c,_v,_a", TABLE_1)
-def test_criterion_6_nominal_area_matches_the_published_table(
+def test_nominal_area_matches_the_published_table(
     resolution: int, _side: float, area: float, _c: int | None, _v: int, _a: int
 ) -> None:
     """Route 1: literal transcription of the 13 metric rows."""
@@ -61,7 +59,7 @@ def test_criterion_6_nominal_area_matches_the_published_table(
 
 
 @pytest.mark.parametrize("resolution", METRIC_RESOLUTIONS)
-def test_criterion_6_area_equals_side_squared(resolution: int) -> None:
+def test_area_equals_side_squared(resolution: int) -> None:
     """Route 2: the equal-area property stated as a table invariant.
 
     The cell is a parallelogram whose base and height are equal, so its
@@ -104,12 +102,12 @@ def test_size_rejects_non_integer_resolutions(bogus: object) -> None:
 
 
 # ==========================================================================
-# Criterion 7 -- scale_for_resolution against both columns, two routes
+# Scale_for_resolution against both columns, two routes
 # ==========================================================================
 
 
 @pytest.mark.parametrize("resolution,_s,_a,_c,visualization,analysis", TABLE_1)
-def test_criterion_7_scales_match_the_published_table(
+def test_scales_match_the_published_table(
     resolution: int,
     _s: float,
     _a: float,
@@ -123,7 +121,7 @@ def test_criterion_7_scales_match_the_published_table(
 
 
 @pytest.mark.parametrize("resolution", METRIC_RESOLUTIONS)
-def test_criterion_7_scales_match_their_closed_forms(resolution: int) -> None:
+def test_scales_match_their_closed_forms(resolution: int) -> None:
     """Route 2: the closed forms the two cited rules imply.
 
     Visualization divides the side by the 0.1 mm minimum visible line;
@@ -141,7 +139,7 @@ def test_criterion_7_scales_match_their_closed_forms(resolution: int) -> None:
 
 
 @pytest.mark.parametrize("resolution", METRIC_RESOLUTIONS)
-def test_criterion_7_the_two_scale_families_differ_by_a_factor_of_five(
+def test_the_two_scale_families_differ_by_a_factor_of_five(
     resolution: int,
 ) -> None:
     """Route 3, free: 0.5 mm over 0.1 mm is 5 at every resolution."""
@@ -300,7 +298,7 @@ def test_get_resolution_accepts_a_uniform_compositional_index() -> None:
 
 
 def test_get_resolution_rejects_a_mixed_resolution_index() -> None:
-    """decompose() does not uniformize; neither does this (invariant F2)."""
+    """decompose() does not uniformize; neither does this."""
     with pytest.raises(ResolutionError, match="mixed-resolution"):
         res.get_resolution("NE(0001/0002(1(A1,A2),2))")
 
@@ -481,7 +479,7 @@ def test_divergence_resolution_one_is_tokenizable_here_but_not_in_the_origin() -
 
     ``itacart_core`` enumerates only the odd levels. Resolution 1 has a
     side of 10^4 m and an area of 10^8 m2, so it meets the stated
-    property; the paper enumerates neither set. F0 owns this reading.
+    property, and the paper enumerates neither set.
     """
     assert res.is_tokenizable_resolution(1) is True
     assert 1 not in {3, 5, 7, 9, 11, 13}

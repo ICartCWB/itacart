@@ -1,9 +1,9 @@
-"""Tests for :mod:`itacart.geodesy` (phase F1).
+"""Tests for :mod:`itacart.geodesy`.
 
-Naming: the five acceptance criteria of the phase have one test each, named
-``test_criterion_<n>_...``, so the handoff can cite evidence by name. The
-remaining tests cover the degenerate cases, the error branches and the two
-independent oracles (closed-form derivative and Simpson quadrature).
+The five properties the module is held to have one test each, named for
+the property, so evidence can be cited by name. The remaining tests cover
+the degenerate cases, the error branches and the two independent oracles
+(closed-form derivative and Simpson quadrature).
 """
 
 from __future__ import annotations
@@ -130,11 +130,11 @@ def enumerate_cases() -> list[tuple[float, float, float, float]]:
 
 
 # ---------------------------------------------------------------------------
-# Acceptance criterion 1 -- projection round-trip
+# Projection round-trip
 # ---------------------------------------------------------------------------
 
 
-def test_criterion_1_roundtrip_named_points() -> None:
+def test_roundtrip_named_points() -> None:
     """geodetic -> sinusoidal -> geodetic closes below 1e-9 degree."""
     for name in ROUNDTRIP_POINTS:
         lon, lat = REFERENCE_POINTS[name]
@@ -144,7 +144,7 @@ def test_criterion_1_roundtrip_named_points() -> None:
         assert abs(lat_back - lat) < 1e-9, name
 
 
-def test_criterion_1_roundtrip_global_grid() -> None:
+def test_roundtrip_global_grid() -> None:
     """Same closure over a global grid, poles excluded (they collapse)."""
     worst = 0.0
     for lat in range(-88, 89, 4):
@@ -156,11 +156,11 @@ def test_criterion_1_roundtrip_global_grid() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Acceptance criterion 2 -- meridian quadrant
+# Meridian quadrant
 # ---------------------------------------------------------------------------
 
 
-def test_criterion_2_meridian_quadrant_matches_published_value() -> None:
+def test_meridian_quadrant_matches_published_value() -> None:
     """meridian_arc(90) reproduces the WGS84 meridian quadrant.
 
     The target is the GeographicLib value, carried to full double
@@ -174,12 +174,12 @@ def test_criterion_2_meridian_quadrant_matches_published_value() -> None:
     assert abs(computed - MERIDIAN_QUADRANT) < 1e-6
 
 
-def test_criterion_2_quadrant_is_computed_not_read() -> None:
+def test_quadrant_is_computed_not_read() -> None:
     """The module must not source the quadrant from the constant.
 
-    Guards the failure mode the opening package calls out: if the
-    implementation returned ``MERIDIAN_QUADRANT`` through any shortcut, the
-    criterion-2 test would pass and prove nothing.
+    Guards a specific failure mode: if the implementation returned
+    ``MERIDIAN_QUADRANT`` through any shortcut, the quadrant test would pass
+    and prove nothing.
     """
     source = inspect.getsource(geodesy)
     assert "MERIDIAN_QUADRANT" not in source
@@ -207,8 +207,8 @@ def test_meridian_arc_matches_simpson_quadrature() -> None:
 def test_meridian_arc_derivative_matches_closed_form() -> None:
     """d/dphi meridian_arc == meridian_radius, to central-difference order.
 
-    The check of section 5.2 of the opening package: a wrong integrand or a
-    wrong quadrature step shows up here before any external comparison.
+    A wrong integrand or a wrong quadrature step shows up here before any
+    external comparison.
     """
     step_deg = 1e-4
     step_rad = math.radians(step_deg)
@@ -221,11 +221,11 @@ def test_meridian_arc_derivative_matches_closed_form() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Acceptance criterion 3 -- inversion of the meridian arc
+# Inversion of the meridian arc
 # ---------------------------------------------------------------------------
 
 
-def test_criterion_3_inverse_meridian_arc_roundtrip() -> None:
+def test_inverse_meridian_arc_roundtrip() -> None:
     """inverse_meridian_arc(meridian_arc(phi)) == phi below 1e-10 degree."""
     worst = 0.0
     for lat in range(-90, 91):
@@ -259,16 +259,16 @@ def test_inverse_meridian_arc_raises_on_iteration_cap() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Acceptance criterion 4 -- Vincenty against an independent solution
+# Vincenty against an independent solution
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.crosscheck
-def test_criterion_4_direct_matches_a_numerically_integrated_geodesic() -> None:
+def test_direct_matches_a_numerically_integrated_geodesic() -> None:
     """The direct solution agrees with Runge-Kutta 4 on the geodesic equations.
 
-    This is the check that pyproj used to provide, done with mathematics
-    instead of a second library. Vincenty solves the geodesic by a series in
+    The check is done with mathematics rather than a second geodesy library.
+    Vincenty solves the geodesic by a series in
     the flattening; the integrator solves the differential equations that
     define a geodesic. Agreement between them is evidence; agreement between
     two implementations of the same series would not be.
@@ -297,7 +297,7 @@ def test_criterion_4_direct_matches_a_numerically_integrated_geodesic() -> None:
     assert worst < 1e-8, f"worst departure {worst} degrees"
 
 
-def test_criterion_4_inverse_returns_the_geodesic_it_was_asked_for() -> None:
+def test_inverse_returns_the_geodesic_it_was_asked_for() -> None:
     """Feed the inverse solution its own answer and the path must close.
 
     The inverse solution is checked through the integrator rather than
@@ -381,22 +381,22 @@ def test_the_projection_is_not_the_spherical_sinusoidal() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Acceptance criterion 5 -- near-antipodal handling
+# Near-antipodal handling
 # ---------------------------------------------------------------------------
 
 
-def test_criterion_5_near_antipodal_raises_convergence_error() -> None:
+def test_near_antipodal_raises_convergence_error() -> None:
     """Antipodal pairs raise instead of returning an unconverged iterate."""
     with pytest.raises(ConvergenceError, match="near-antipodal"):
         geodesy.inverse_geodesic(0.0, 0.0, 180.0, 0.0)
 
 
-def test_criterion_5_frontier_is_beyond_operational_range() -> None:
+def test_frontier_is_beyond_operational_range() -> None:
     """Everything that converges is a number; the frontier sits past 19 000 km.
 
     Cadastral geometry never approaches this separation, but the frontier
     must be measured rather than assumed: an exception raised too early
-    would break F7 densification silently.
+    would break orthodromic densification silently.
     """
     converged: list[float] = []
     for label, second in NEAR_ANTIPODAL_PAIRS:
@@ -549,7 +549,7 @@ def test_geodesic_roundtrip_direct_then_inverse() -> None:
             )
             # 5 um measured at 250 m: the inverse solution loses absolute
             # precision on short lines. Five orders below the 1 cm cell,
-            # and below the noise of any GNSS survey feeding F7.
+            # and below the noise of any GNSS survey feeding the fill.
             assert back_distance == pytest.approx(distance, abs=1e-4)
             assert back_azimuth == pytest.approx(azimuth, abs=1e-6)
 
@@ -630,7 +630,7 @@ def test_public_surface_is_declared() -> None:
 # ---------------------------------------------------------------------------
 #
 # The origin file is not vendored into this repository, so these values were
-# captured from itacart_core/geodesy.py during F1 and are pinned here as
+# captured from itacart_core/geodesy.py when it was ported and are pinned as
 # literals. They are what keeps the port auditable after the origin is out of
 # reach: any drift in the projection shows up as an exact-equality failure,
 # not as a tolerance that quietly widens.
@@ -750,7 +750,7 @@ def test_geodesic_argument_order_is_lon_lat() -> None:
 
 
 def test_roundtrip_error_fits_the_epsilon_budget_of_cell_quantisation() -> None:
-    """Round-trip noise on the plane stays far under the F3 flooring epsilon.
+    """Round-trip noise on the plane stays far under the cell flooring epsilon.
 
     ``itacart_core.cells`` floors sheared coordinates onto the grid with a
     1e-6 m epsilon, precisely so a representative point sitting on a cell
@@ -765,7 +765,7 @@ def test_roundtrip_error_fits_the_epsilon_budget_of_cell_quantisation() -> None:
             lon_back, lat_back = geodesy.sinusoidal_to_geodetic(x, y)
             x2, y2 = geodesy.geodetic_to_sinusoidal(lon_back, lat_back)
             worst = max(worst, math.hypot(x2 - x, y2 - y))
-    assert worst < 1e-7, f"round-trip noise {worst} m eats into the F3 epsilon"
+    assert worst < 1e-7, f"round-trip noise {worst} m eats into the flooring epsilon"
 
 
 def test_polar_row_beyond_the_quadrant_raises_instead_of_returning_a_latitude() -> None:

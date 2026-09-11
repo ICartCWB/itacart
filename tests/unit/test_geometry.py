@@ -97,7 +97,7 @@ def small_square() -> Polygon:
 
 
 # --------------------------------------------------------------------------
-# Criterion 1 and 6: the paper's Figure 7
+# The paper's Figure 7
 # --------------------------------------------------------------------------
 
 
@@ -260,7 +260,7 @@ def test_figure_7b_round_trips_through_vertex_to_cell() -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 2: the containment chain
+# The containment chain
 # --------------------------------------------------------------------------
 
 
@@ -298,7 +298,7 @@ def test_unknown_containment_mode_is_rejected(parcel: Polygon) -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 3: count times nominal area against the equal-area plane
+# Count times nominal area against the equal-area plane
 # --------------------------------------------------------------------------
 
 
@@ -623,7 +623,7 @@ def test_count_matches_the_centre_mode_fill(parcel: Polygon) -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 4: the count does not materialise indices
+# The count does not materialise indices
 # --------------------------------------------------------------------------
 
 
@@ -864,7 +864,7 @@ def test_count_stack_depth_is_the_resolution_difference(parcel: Polygon) -> None
 
 
 # --------------------------------------------------------------------------
-# Criterion 5: densification
+# Densification
 # --------------------------------------------------------------------------
 
 
@@ -980,7 +980,7 @@ def test_auto_segment_is_monotone_and_capped() -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 6: vertex order and winding
+# Vertex order and winding
 # --------------------------------------------------------------------------
 
 
@@ -1078,7 +1078,7 @@ def test_cells_to_geometry_rejects_an_unsupported_type() -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 7: consecutive collapse, non-consecutive kept
+# Consecutive collapse, non-consecutive kept
 # --------------------------------------------------------------------------
 
 
@@ -1122,7 +1122,7 @@ def test_ring_cells_handles_a_degenerate_ring() -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 8: canonical rings
+# Canonical rings
 # --------------------------------------------------------------------------
 
 
@@ -1180,7 +1180,7 @@ def test_canonicalize_rings_preserves_ring_order() -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 9: the antemeridian
+# The antemeridian
 # --------------------------------------------------------------------------
 
 
@@ -1503,7 +1503,10 @@ def test_polyfill_rejects_a_boolean_worker_count(parcel: Polygon) -> None:
 
 
 def test_polyfill_refuses_an_empty_geometry() -> None:
-    with pytest.raises(GeometryError, match="covers no cell"):
+    """The refusal names emptiness, not a guess among possible causes."""
+    with pytest.raises(
+        GeometryError, match="covers no cell at this resolution: it is empty"
+    ):
         itacart.polyfill(Polygon(), 5)
 
 
@@ -1512,7 +1515,7 @@ def test_polyfill_refuses_a_geometry_narrower_than_a_cell() -> None:
     sliver = Polygon(
         [(10.0, 45.0), (10.000001, 45.0), (10.000001, 45.000001), (10.0, 45.000001)]
     )
-    with pytest.raises(GeometryError, match="covers no cell"):
+    with pytest.raises(GeometryError, match="narrower than one cell under 'contains'"):
         itacart.polyfill(sliver, 3, containment="contains")
 
 
@@ -1736,21 +1739,20 @@ def test_a_wholly_contained_region_costs_far_less_than_its_cells(
 
 
 # --------------------------------------------------------------------------
-# Sweep: measurements this phase owes the ones that come after
+# Sweep: measurements the fill's contract rests on
 # --------------------------------------------------------------------------
 
 
 def test_polyfill_never_consults_the_topology_caches(parcel: Polygon) -> None:
-    """Filling asks topology nothing, at any resolution (``P-6.16``).
+    """Filling asks topology nothing, at any resolution.
 
-    The pendency asked whether the 4,096-entry contact cache is large
-    enough under a resolution-13 fill. Measured, the question is empty:
-    the descent subdivides in the sheared lattice and never asks for a
-    neighbour, so both caches stay at zero hits, zero misses and zero
-    entries.
+    Whether the 4,096-entry contact cache is large enough under a
+    resolution-13 fill is an empty question: the descent subdivides in the
+    sheared lattice and never asks for a neighbour, so both caches stay at
+    zero hits, zero misses and zero entries.
 
-    That is also why this phase never needed ``P-6.20`` resolved. The
-    ``get_neighbor`` asymmetry cannot reach a fill that composes no step.
+    It is also why no asymmetry in ``get_neighbor`` can reach the fill: a
+    fill that composes no step never meets one.
     """
     from itacart import topology
 
@@ -1772,17 +1774,17 @@ def test_polyfill_never_consults_the_topology_caches(parcel: Polygon) -> None:
 def test_children_union_matches_the_parent_only_away_from_the_border() -> None:
     """The union of children agrees with the parent in the interior only.
 
-    ``P-4.11`` reported a 1.17e-3 excess without saying where. Enumerated
-    by family rather than sampled, the four separate cleanly: an interior
+    A single figure for the whole grid -- an excess of 1.17e-3 -- says
+    nothing about where it arises. Enumerated by family rather than
+    sampled, the four separate cleanly: an interior
     parent sits at about -1.5e-7, a deficit rather than an excess,
     because each child approximates the curved parallel by the chord of
     its own height and the chords fall inside the parent's. The
     meridian column and the border-absorbing column run positive and
     grow toward the pole.
 
-    The relevance to criterion 2 is that :func:`polyfill` refuses all
-    three non-interior families, so the containment chain is asserted
-    over squares that do carry this agreement.
+    This is why the containment chain is asserted over squares that carry
+    this agreement; the border families are filled by walks of their own.
     """
     from shapely.ops import unary_union
 
@@ -1805,15 +1807,13 @@ def test_children_union_matches_the_parent_only_away_from_the_border() -> None:
 def test_border_children_survive_every_refinement() -> None:
     """``get_children`` refines a border cell down to resolution 13.
 
-    ``P-5.2`` asked whether the overlap filter behind the validity gate
-    is redundant. It is not, but the threshold it compared against was a
-    fixed square metre, which is the whole nominal area of a
-    resolution-9 cell and larger than every cell below it. The
-    comparison is strict, so a child wholly inside its parent was
-    rejected for being the size it is supposed to be, and the eastern
-    border of the grid had no refinement below resolution 8 at all. The
-    threshold is now a fraction of the nominal area of the level and
-    shrinks with the cell.
+    The overlap filter behind the validity gate is not redundant, and its
+    threshold has to shrink with the cell. A fixed square metre is the whole
+    nominal area of a resolution-9 cell and larger than every cell below
+    it; the comparison is strict, so a child wholly inside its parent would
+    be rejected for being the size it is supposed to be, and the eastern
+    border of the grid would have no refinement below resolution 8. The
+    threshold is a fraction of the nominal area of the level.
 
     Two assertions, and the second is the guard against overcorrection.
     Every level has to yield children, and the counts have to keep
@@ -1883,7 +1883,7 @@ and has to fill rather than be refused.
 def test_a_footprint_astride_the_antemeridian_fills_inside_a_zone(
     name: str, low: float, high: float
 ) -> None:
-    """The positive case criterion 9 of the previous phase never had.
+    """The positive case of the antemeridian: a zone footprint astride it.
 
     A ring written from 179.9 to 180.3 lies on one side of the line
     already, so it does not cross: inside an extension zone the domain
@@ -1984,25 +1984,31 @@ def test_densification_keeps_the_longitude_branch_it_was_given() -> None:
 
 
 def test_an_outline_that_crosses_itself_is_refused_with_our_own_name() -> None:
-    """A self-intersecting input reaches the clip, and is named there.
+    """A fold is named by this package, at the entry and at the split.
 
-    The quadrant split hands the plane geometry to the engine, which
-    refuses a figure with no interior and raises its own exception. That
-    exception used to reach callers through a public name, and the cell
-    that carried it was a polar-row cell whose densified boundary folded
-    over the pole -- a defect of this package, now repaired at the walk.
+    A caller's bowtie is refused at the entrance, as an invalid areal
+    geometry, by both public entry points: they share the machinery, and a
+    future split of it should not quietly leave one of them unguarded.
 
-    A caller's own bowtie is not a defect and is not going away, so the
-    path stays and is pinned here rather than through the grid. Both
-    public entry points are asserted: they share the machinery, and a
-    future split of it should not quietly leave one of them uncovered.
+    The quadrant split keeps its own name for a fold as well. The engine
+    refuses a plane figure with no interior with an exception this package
+    does not own, and that exception once reached callers through a public
+    name, carried by a polar-row cell whose densified boundary folded over
+    the pole -- a defect of this package, repaired at the walk. A valid
+    outline that folds once projected would reach the split the same way,
+    so the split is handed a folded figure directly.
     """
     bowtie = Polygon([(10.0, 10.0), (10.2, 10.2), (10.0, 10.2), (10.2, 10.0)])
     assert not bowtie.is_valid
 
     for call in (itacart.polyfill, itacart.count_internal_cells):
-        with pytest.raises(GeometryError, match="crosses itself"):
+        with pytest.raises(GeometryError, match="not a valid geometry"):
             call(bowtie, 7)
+
+    folded = geometry._project(bowtie)
+    assert not folded.is_valid
+    with pytest.raises(GeometryError, match="crosses itself"):
+        geometry._quadrant_pieces(folded)
 
 
 # --------------------------------------------------------------------------
@@ -2339,8 +2345,7 @@ def test_the_screen_agrees_all_the_way_down_the_frontier() -> None:
     levels that is traded away, not the breadth within one.
 
     This test exists because a bound measured at two levels and asserted
-    for thirteen is exactly how the fixed overlap threshold survived
-    into this phase.
+    for thirteen is how a fixed overlap threshold survives unnoticed.
     """
     base = itacart.cell_size(1)
     deepest = 0
@@ -2673,3 +2678,429 @@ def test_the_polar_row_narrows_with_the_target_like_the_others() -> None:
         for resolution in (1, 3, 5):
             band = geometry._anomalous_band("NE", 1, row, itacart.cell_size(resolution))
             assert not band.is_empty, (row, resolution)
+
+
+# --------------------------------------------------------------------------
+# The border-absorbing roots: counting, the ceiling, and what is refused
+# --------------------------------------------------------------------------
+
+
+def _last_column_footprint(row: int) -> Polygon:
+    """The drawn outline of the last lattice column of an eastern row."""
+    last = itacart.last_lattice_column("NE", row, itacart.cell_size(1))
+    return Polygon(itacart.cell_to_boundary(f"NE({last:04d}/{row:04d})"))
+
+
+#: A band inside the northern cap, clear of its row boundary: the polar row
+#: starts near 89.9824 degrees, and both edges sit inside it.
+CAP_BAND = box(1.0, 89.985, 89.0, 89.999)
+
+
+@pytest.mark.parametrize("family, resolution", (("last column", 3), ("polar cap", 5)))
+def test_a_count_over_the_absorbing_family_ignores_the_fill_ceiling(
+    monkeypatch: pytest.MonkeyPatch, family: str, resolution: int
+) -> None:
+    """A count names no cell, so the fill's ceiling is not its budget.
+
+    Both absorbing walkers can stop once a running total passes a budget.
+    The fill needs that, because it must refuse before it names anything.
+    A count materialises nothing and is meant to run where the index could
+    not be built, yet it was handed the fill's ceiling as its budget and
+    returned the partial total at the moment of passing it. With the
+    ceiling lowered to 5 it answered 25 for the 63 cells under the last
+    column of row 300, and 6 for the 140 under this band of the cap. The
+    real ceiling hides the same truncation until a single absorbing root
+    holds more target cells than it.
+
+    The answer is read from the fill, which counts by naming, before the
+    ceiling is lowered; the fill itself would be refused under it.
+    """
+    parcel = _last_column_footprint(300) if family == "last column" else CAP_BAND
+    expected = len(itacart.decompose(itacart.polyfill(parcel, resolution)))
+    assert itacart.count_internal_cells(parcel, resolution) == expected
+    ceiling = 5
+    assert expected > ceiling
+    monkeypatch.setattr(geometry, "MAX_FILL_CELLS", ceiling)
+    assert itacart.count_internal_cells(parcel, resolution) == expected
+
+
+def test_contains_keeps_a_cap_cell_exactly_when_its_ring_lies_inside() -> None:
+    """Under ``contains`` an absorbing leaf is judged by its own ring.
+
+    The cap is walked ring by ring, because none of its cells is the
+    sheared square the ordinary descent tests. The rule is checked against
+    the query the fill itself builds, cell by cell, over every cell the
+    band touches: kept exactly when the effective ring lies inside. On this
+    band at resolution 5 that keeps 106 of the 192, so the predicate is
+    seen answering both ways, and the three modes still nest.
+    """
+    resolution = 5
+    plane, _ = geometry._prepare(CAP_BAND, resolution, densify=True)
+    kept = set(itacart.decompose(itacart.polyfill(CAP_BAND, resolution, "contains")))
+    centre = set(itacart.decompose(itacart.polyfill(CAP_BAND, resolution)))
+    touched = set(
+        itacart.decompose(itacart.polyfill(CAP_BAND, resolution, "intersects"))
+    )
+    assert kept <= centre <= touched
+    assert kept and touched - kept
+    for cell in touched:
+        inside = plane.contains(Polygon(boundary.plane_ring(cell)[1]))
+        assert (cell in kept) == inside, cell
+
+
+def test_contains_refuses_an_ordinary_cell_an_absorbing_root_only_crosses() -> None:
+    """Below an absorbing root the ordinary cells are squares again.
+
+    Once a branch of the absorbing tree leaves the family, the closed-form
+    descent resumes and its cells are tested as sheared squares. The query
+    here covers the last column of row 300 from a parallel cut through the
+    middle of a resolution-3 row upwards, and that parallel is a straight
+    line in the plane, so whether an ordinary cell lies wholly inside is
+    read from its southern edge alone. Of the 33 ordinary cells under the
+    root that the query touches, 27 are kept and the 6 it crosses are not.
+    Absorbing leaves are left out of the reckoning on purpose: whether
+    their rings can lie inside a query that stops at the antemeridian is a
+    question about their chords, not about this descent.
+    """
+    root = _last_column_footprint(300)
+    last = itacart.last_lattice_column("NE", 300, itacart.cell_size(1))
+    lons = [x for x, _ in root.exterior.coords]
+    lats = [y for _, y in root.exterior.coords]
+    cut = min(lats) + 0.35 * (max(lats) - min(lats))
+    query = box(min(lons) - 0.05, cut, 180.0, max(lats) + 0.05)
+    under = set(itacart.get_children(f"NE({last:04d}/0300)", 3, flatten=True))
+    ordinary = {cell for cell in under if not itacart.absorbs_border(cell)}
+    kept = set(itacart.decompose(itacart.polyfill(query, 3, "contains")))
+    touched = set(itacart.decompose(itacart.polyfill(query, 3, "intersects")))
+    crossed = touched & ordinary
+    assert crossed & kept and crossed - kept
+    for cell in crossed:
+        south = min(lat for _, lat in itacart.cell_to_boundary(cell))
+        assert (cell in kept) == (south > cut), cell
+
+
+def test_an_absorbing_pre_count_stops_once_the_fill_ceiling_is_passed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An oversized fill over an absorbing root is refused mid-walk.
+
+    The absorbing tree has no formula, so the fill pre-counts it by walking
+    it, against what the budget has left. The walk stops at the first child
+    that takes the running total past that. With the ceiling lowered to 5,
+    the root of the last column of row 300 stops at 25 of its 63 cells and
+    the fill is refused, and the refusal does not recommend the compaction
+    this family refuses without saying so.
+    """
+    parcel = _last_column_footprint(300)
+    whole = itacart.count_internal_cells(parcel, 3)
+    real = geometry._count_border_node
+    roots: list[tuple[int | None, int]] = []
+
+    def watched(
+        prepared: object,
+        walk: object,
+        cell: str,
+        level: int,
+        target: int,
+        containment: str,
+        remaining: int | None,
+    ) -> int:
+        total = real(prepared, walk, cell, level, target, containment, remaining)
+        if level == 1:
+            roots.append((remaining, total))
+        return total
+
+    monkeypatch.setattr(geometry, "_count_border_node", watched)
+    monkeypatch.setattr(geometry, "MAX_FILL_CELLS", 5)
+    with pytest.raises(GeometryError, match="exceeded 5 cells") as refusal:
+        itacart.polyfill(parcel, 3)
+    assert "border-absorbing cells, which refuse it" in str(refusal.value)
+    passed = [
+        (left, total) for left, total in roots if left is not None and total > left
+    ]
+    assert len(passed) == 1, roots
+    assert passed[0][1] < whole
+
+
+@pytest.mark.parametrize("family", ("last column", "polar cap"))
+def test_compact_is_refused_by_name_over_an_absorbing_root(family: str) -> None:
+    """``compact=True`` reaches a tree with no uniform fold, and says so.
+
+    The fold rule reads a uniform tree, and neither absorbing walker has
+    one: the last lattice column holds two to seven children per node and
+    the cap its own staircase. The same fill without compaction succeeds,
+    so the refusal is about the option and not about the geometry.
+    """
+    parcel, resolution = (
+        (_last_column_footprint(300), 3) if family == "last column" else (CAP_BAND, 5)
+    )
+    assert itacart.decompose(itacart.polyfill(parcel, resolution))
+    with pytest.raises(GeometryError, match="not available over the border-absorbing"):
+        itacart.polyfill(parcel, resolution, compact=True)
+
+
+def test_the_base_screen_meets_only_the_last_column_refusal() -> None:
+    """Every whole-row refusal is filtered out before the screen asks.
+
+    ``_base_cells`` asks ``_check_addressable`` only about a positive
+    column no further out than its row's last one, and catches just the
+    refusal of that last column. The refusals that concern a whole row --
+    past the pole, a parallel shorter than one cell, the polar row -- are
+    never asked: enumerated over the four quadrants and every row to one
+    past the pole, each row that offers such a column is ordinary below
+    its last column and refuses the last column as absorbing, and each
+    row that offers none is refused whole. That second half is the control:
+    it is what the screen would meet if the filter ever let a row through.
+    """
+    side = itacart.cell_size(1)
+    whole_rows = 0
+    for quadrant in QUADRANTS:
+        first = max(geometry._first_lattice_column(quadrant), 1)
+        for row in range(geometry._POLAR_ROW + 2):
+            last = itacart.last_lattice_column(quadrant, row, side)
+            if last < first:
+                with pytest.raises(DomainError) as refusal:
+                    geometry._check_addressable(quadrant, first, row)
+                assert not isinstance(refusal.value, NonExistentCellError)
+                whole_rows += 1
+                continue
+            if last - 1 >= first:
+                geometry._check_addressable(quadrant, last - 1, row)
+            with pytest.raises(NonExistentCellError):
+                geometry._check_addressable(quadrant, last, row)
+    assert whole_rows == 2 * len(QUADRANTS)
+
+
+def test_the_meridian_walk_is_offered_no_row_past_the_pole() -> None:
+    """The rows offered to the meridian walk stop at the polar row.
+
+    Three facts make that so without a test inside the walk. A latitude
+    past 90 degrees is refused before anything is projected. The pole
+    projects into the polar row, in both hemispheres. And every eastern row
+    up to it addresses the meridian column. The walk still reaches the
+    polar row when the geometry does.
+    """
+    from itacart.geodesy import geodetic_to_sinusoidal
+
+    past_the_pole = box(-0.05, 89.99, 0.05, 90.2)
+    for call in (itacart.polyfill, itacart.count_internal_cells):
+        with pytest.raises(DomainError, match=r"\[-90, 90\]"):
+            call(past_the_pole, 1)
+    for latitude in (90.0, -90.0):
+        _, y = geodetic_to_sinusoidal(0.0, latitude)
+        assert math.floor(abs(y) / geometry._L1) == geometry._POLAR_ROW
+    side = itacart.cell_size(1)
+    for quadrant in ("NE", "SE"):
+        first = geometry._first_lattice_column(quadrant)
+        rows = range(geometry._POLAR_ROW + 1)
+        assert all(
+            itacart.last_lattice_column(quadrant, r, side) >= first for r in rows
+        )
+    plane, _ = geometry._prepare(CAP_BAND, 5, densify=True)
+    assert geometry._meridian_rows(plane) == [("N", geometry._POLAR_ROW)]
+
+
+# --------------------------------------------------------------------------
+# An areal input must be valid, and is never repaired
+# --------------------------------------------------------------------------
+
+#: Invalid areal inputs. The first two have a part past the antemeridian
+#: with no area, which is what used to carry them past the extension screen;
+#: the bowtie and the overlapping parts are invalid anywhere.
+SPIKE_PAST_THE_LINE = Polygon(
+    [
+        (179.0, 10.0),
+        (179.9, 10.0),
+        (179.9, 10.5),
+        (180.5, 10.5),
+        (179.9, 10.5),
+        (179.9, 11.0),
+        (179.0, 11.0),
+    ]
+)
+COLLAPSED_PAST_THE_LINE = Polygon([(179.0, 10.0), (181.0, 10.0), (180.5, 10.0)])
+BOWTIE = Polygon([(10.0, 10.0), (10.2, 10.2), (10.0, 10.2), (10.2, 10.0)])
+OVERLAPPING_PARTS = MultiPolygon(
+    [box(10.0, 10.0, 10.2, 10.2), box(10.1, 10.1, 10.3, 10.3)]
+)
+INVALID_AREAS = {
+    "spike past the line": SPIKE_PAST_THE_LINE,
+    "collapsed past the line": COLLAPSED_PAST_THE_LINE,
+    "bowtie": BOWTIE,
+    "overlapping parts": OVERLAPPING_PARTS,
+}
+
+
+@pytest.mark.parametrize(
+    "valid",
+    (
+        box(10.0, 10.0, 10.2, 10.2),
+        MultiPolygon([box(10.0, 10.0, 10.1, 10.1), box(10.2, 10.2, 10.3, 10.3)]),
+    ),
+    ids=("polygon", "multipolygon"),
+)
+def test_a_valid_areal_geometry_is_still_filled(valid: Polygon | MultiPolygon) -> None:
+    """The guard on validity asks nothing of a geometry that is valid."""
+    assert valid.is_valid
+    for containment in ("center", "intersects", "contains"):
+        cells = itacart.decompose(itacart.polyfill(valid, 5, containment))
+        assert cells and all(itacart.is_valid_cell(cell) for cell in cells)
+    centre = itacart.decompose(itacart.polyfill(valid, 5))
+    assert itacart.count_internal_cells(valid, 5) == len(centre)
+
+
+@pytest.mark.parametrize("name", sorted(INVALID_AREAS))
+def test_an_invalid_areal_geometry_is_refused_by_its_reason_and_not_repaired(
+    name: str,
+) -> None:
+    """Validity belongs to the geometry the caller wrote, not to where it lies.
+
+    A polygon or multipolygon that is not valid is refused before anything
+    reads it -- before the antemeridian screens, the clip or the fill --
+    and the refusal carries the engine's own account of what is wrong,
+    with where. Nothing is repaired: a zero-width buffer or ``make_valid``
+    would decide which area was meant, and the two halves of a bowtie are
+    not the caller's to lose. Both entry points refuse alike, under every
+    containment mode, because the fill and the count share the entrance.
+    """
+    from shapely.validation import explain_validity
+
+    invalid = INVALID_AREAS[name]
+    assert not invalid.is_valid
+    reason = explain_validity(invalid)
+    for containment in ("center", "intersects", "contains"):
+        with pytest.raises(GeometryError, match="not a valid geometry") as refusal:
+            itacart.polyfill(invalid, 3, containment)
+        assert type(refusal.value) is GeometryError
+        assert reason in str(refusal.value)
+    with pytest.raises(GeometryError, match="not a valid geometry"):
+        itacart.count_internal_cells(invalid, 3)
+
+
+@pytest.mark.parametrize("name", ("spike past the line", "collapsed past the line"))
+def test_an_invalid_outline_past_the_antemeridian_dies_at_the_validity_guard(
+    name: str,
+) -> None:
+    """The outline that slipped past the extension screen now stops earlier.
+
+    Its part past the line has no area, and the extension screen let such
+    a part through as if it were an areal geometry touching the far edge of
+    a zone. Filled under ``intersects`` it named the cells of its valid
+    remainder, while the same line as a ``LineString`` was refused. Now it
+    is refused for what it is, and not for where it reaches: the refusal is
+    the validity one, not the antemeridian's.
+    """
+    invalid = INVALID_AREAS[name]
+    past = invalid.difference(box(-180.0, -90.0, 180.0, 90.0))
+    assert not past.is_empty and past.area == 0.0
+    with pytest.raises(GeometryError, match="not a valid geometry") as refusal:
+        itacart.polyfill(invalid, 1, containment="intersects")
+    assert not isinstance(refusal.value, AntemeridianError)
+
+
+def test_the_valid_twin_ending_at_the_antemeridian_is_filled_and_its_rule_kept() -> (
+    None
+):
+    """Valid geometry meets the same antemeridian rules as before.
+
+    A valid box that stops at 180 degrees is filled under every mode, and
+    counted as the centre fill is. The same box carried half a degree past
+    the line, outside any extension zone, is still refused by the
+    antemeridian's own name rather than by the validity guard.
+    """
+    twin = box(179.0, 10.0, 180.0, 11.0)
+    past = box(179.0, 10.0, 180.5, 11.0)
+    assert twin.is_valid and past.is_valid
+    for containment in ("center", "intersects", "contains"):
+        cells = itacart.decompose(itacart.polyfill(twin, 3, containment))
+        assert cells and all(itacart.is_valid_cell(cell) for cell in cells)
+    centre = itacart.decompose(itacart.polyfill(twin, 3))
+    assert itacart.count_internal_cells(twin, 3) == len(centre)
+    assert itacart.geo_to_cell(179.5, 10.5, 3) in centre
+    for call in (itacart.polyfill, itacart.count_internal_cells):
+        with pytest.raises(AntemeridianError):
+            call(past, 3)
+
+
+def test_a_line_keeps_its_own_contract_whatever_the_areal_guard_says() -> None:
+    """Having no area is not being invalid.
+
+    A line that crosses itself is a valid geometry, and under ``intersects``
+    it is filled as before. Under an areal predicate it keeps no cell and
+    says so. The line matching the invalid outline past 180 degrees is
+    refused by the antemeridian's name, exactly as it was.
+    """
+    crossing = LineString([(10.0, 10.0), (10.2, 10.2), (10.0, 10.2), (10.2, 10.0)])
+    assert crossing.is_valid and not crossing.is_simple
+    assert itacart.decompose(itacart.polyfill(crossing, 3, "intersects"))
+    with pytest.raises(GeometryError, match="has no area"):
+        itacart.polyfill(crossing, 3)
+    with pytest.raises(AntemeridianError):
+        itacart.polyfill(LineString([(179.0, 10.0), (181.0, 10.0)]), 1, "intersects")
+
+
+#: Valid representations the package supports on either side of the screens
+#: the validity guard now precedes: the seam, the antemeridian cut, the pole
+#: and both extension zones. Every one is valid as written.
+VALID_BEFORE_THE_SCREENS = {
+    "polygon touching 180": box(179.0, 10.0, 180.0, 11.0),
+    "polygon touching -180": box(-180.0, 10.0, -179.0, 11.0),
+    "multipolygon cut at the antimeridian": MultiPolygon(
+        [box(179.5, 10.0, 180.0, 11.0), box(-180.0, 10.0, -179.5, 11.0)]
+    ),
+    "rectangle up to the pole": box(-180.0, 89.9, 180.0, 90.0),
+    "band inside the northern cap": CAP_BAND,
+    "fiji past 180": Polygon(
+        [(179.9, -18.0), (181.0, -18.0), (181.0, -17.8), (179.9, -17.8)]
+    ),
+    "chukotka past 180": Polygon(
+        [(179.9, 68.0), (182.0, 68.0), (182.0, 68.2), (179.9, 68.2)]
+    ),
+    "parts touching at a vertex on 180": MultiPolygon(
+        [box(179.5, -18.5, 180.0, -18.0), box(180.0, -18.0, 180.5, -17.5)]
+    ),
+    "triangle with a vertex on 180": Polygon(
+        [(179.0, 10.0), (180.0, 10.5), (179.0, 11.0)]
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(VALID_BEFORE_THE_SCREENS))
+def test_a_valid_geographic_representation_passes_the_validity_guard(
+    name: str,
+) -> None:
+    """The guard's place, before every screen, refuses no supported shape.
+
+    Validity is asked of the geometry as written, before the antemeridian
+    and extension screens and before anything is projected, so a shape
+    that only becomes legitimate once those screens have read it would be
+    refused there. None of the ways the package lets a caller write the
+    seam, the cut at the antimeridian, the pole or an extension zone is
+    such a shape: each is valid as written, passes the guard, and is filled.
+    """
+    written = VALID_BEFORE_THE_SCREENS[name]
+    assert written.is_valid
+    geometry._refuse_invalid_area(written)
+    cells = itacart.decompose(itacart.polyfill(written, 1, "intersects"))
+    assert cells and all(itacart.is_valid_cell(cell) for cell in cells)
+
+
+@pytest.mark.parametrize(
+    "cell", ("NE(0000/1000)", "SE(0000/1000)", "SE(1911/0199(2(A2)))")
+)
+def test_an_outline_the_package_exports_passes_the_validity_guard(cell: str) -> None:
+    """What the exporter writes, the fill accepts as written.
+
+    Both caps and a cell of the Fiji zone, whose exported outline lies past
+    180 degrees, come back through ``from_geojson`` without the guard
+    objecting to any feature.
+    """
+    from shapely.geometry import shape
+
+    assert itacart.is_valid_cell(cell)
+    collection = itacart.cells_to_geojson(cell)
+    for feature in collection["features"]:
+        outline = shape(feature["geometry"])
+        assert outline.is_valid, cell
+        geometry._refuse_invalid_area(outline)
+    assert itacart.from_geojson(collection, 3, containment="intersects")

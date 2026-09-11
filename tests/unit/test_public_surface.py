@@ -1,9 +1,8 @@
 """The package's public contract, stated as an invariant rather than a list.
 
-Four separate phases each noticed that some name declared public by a
-module never reached the top of the package, and each of them wrote the
-missing name into a note instead of into a check. A list of names goes
-stale the moment a module gains one; an invariant does not.
+A name a module declares public can fail to reach the top of the package,
+and a list of names cannot catch it: a list goes stale the moment a module
+gains one; an invariant does not.
 
 The rule is: whatever a module declares in its own ``__all__`` is
 importable from ``itacart`` and appears in ``itacart.__all__``. Nothing
@@ -170,7 +169,7 @@ class TestH3Aliases:
 
 
 def test_cell_to_latlng_refuses_a_composed_index() -> None:
-    """``P-0.8``: one cell in, one point out, or a loud refusal.
+    """One cell in, one point out, or a loud refusal.
 
     The alias exists to offer the H3 contract, and a composed index has
     no single point to give. Refusing is the only answer that does not
@@ -181,10 +180,10 @@ def test_cell_to_latlng_refuses_a_composed_index() -> None:
     pair of coordinate *pairs*, swapped, with no error at all. Three or
     more raised an unpacking error naming nothing useful.
 
-    It lives here rather than with the phase that fixed it because the
-    function lives in ``__init__``: a test of the public surface belongs
-    with the public surface, and putting it elsewhere makes a partially
-    applied change fail in a file that has nothing to do with the cause.
+    It lives here because the function lives in ``__init__``: a test of the
+    public surface belongs with the public surface, and putting it elsewhere
+    makes a partially applied change fail in a file that has nothing to do
+    with the cause.
     """
     cells = [itacart.geo_to_cell(10.0 + i * 0.001, 45.0, 9) for i in range(3)]
     assert len(set(cells)) == 3, "the sample cells have to be distinct"

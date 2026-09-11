@@ -59,14 +59,14 @@ WGS84_EP2: Final[float] = WGS84_E2 / (1.0 - WGS84_E2)
 # package in any extra; the provenance is kept because a constant without one
 # is a magic number. Deliberately NOT the value our
 # own series computes: the point of this constant is to be an independent
-# target, and seeding it from our arithmetic would make F1 compare the code
-# against itself.
+# target, and seeding it from our arithmetic would make the geodesy tests
+# compare the code against itself.
 MERIDIAN_QUADRANT: Final[float] = 10001965.729312724
 """Meridian quadrant of the WGS84 ellipsoid, in metres.
 
-External literal, kept fixed on purpose so that F1 has an independent
-target: ``meridian_arc(90 deg)`` must reproduce it from Eq. (2) rather
-than read it back from here.
+External literal, kept fixed on purpose as an independent target:
+``meridian_arc(90 deg)`` must reproduce it from Eq. (2) rather than read it
+back from here.
 """
 
 EQUATOR_QUADRANT: Final[float] = math.pi * WGS84_A
@@ -226,7 +226,8 @@ RES1_CELLS_X: Final[int] = 2003
 full and column ``2003`` is 0.75 wide. This is what reconciles the two
 statements the paper makes: "approximately 2,003 cells" (section 3.1) counts
 the full ones, while ``RES1_MAX_INDEX`` (Table 1) addresses the partial
-one as well. Source of the antemeridian trapezoids handled in F4.
+one as well. Source of the antemeridian trapezoids :mod:`itacart.boundary`
+handles.
 """
 
 RES1_CELLS_Y: Final[int] = 1000
@@ -257,8 +258,9 @@ QUATERNARY_CODES: Final[tuple[str, ...]] = ("1", "2", "3", "4")
 
 Row-major from the SOUTHERN row, as drawn in Figure 3(c): ``1`` and ``2``
 sit on the bottom row (south), ``3`` and ``4`` on the top row (north).
-That layout is what makes the F6 rule work: vertical adjacency adds or
-subtracts 2, horizontal adjacency adds or subtracts 1.
+That layout is what makes the neighbour rule of :mod:`itacart.topology`
+work: vertical adjacency adds or subtracts 2, horizontal adjacency adds or
+subtracts 1.
 """
 
 QUINARY_CODES: Final[tuple[str, ...]] = tuple(
@@ -273,8 +275,9 @@ QUATERNARY, odd resolutions (>= 3) are QUINARY.
 
 Row-major from the SOUTHERN row, as drawn in Figure 3(d): row ``A`` is
 the bottom row and row ``E`` the top one, so generation starts at the
-south. The vertical wrap-around ``E <-> A`` used in F6 depends on this
-orientation; reversing it silently flips north and south.
+south. The vertical wrap-around ``E <-> A`` that :mod:`itacart.topology`
+uses depends on this orientation; reversing it silently flips north and
+south.
 """
 
 REFINEMENT_RATIO: Final[tuple[int | None, ...]] = (
@@ -434,8 +437,8 @@ Antarctica along the 180th meridian is deliberately excluded (limited
 cadastral application). Cells in the oceans and in Antarctica along that
 boundary therefore have unequal areas.
 
-The keys ``"FIJI"`` and ``"CHUKOTKA"`` are load-bearing: F4 tests
-``extension_zone_for_point`` against these exact strings.
+The keys ``"FIJI"`` and ``"CHUKOTKA"`` are load-bearing: the boundary tests
+check ``extension_zone_for_point`` against these exact strings.
 """
 
 EXTENSION_LON_PRECISION: Final[float] = 0.5
@@ -474,8 +477,7 @@ a standard parallelogram of the same resolution.
 #: surface at its measured size.
 #:
 #: The fifty-odd names left out are private by declaration rather than by
-#: oversight, which is the state the previous phase asked for and could not
-#: express. Promoting one later is additive and breaks nothing; that is why
+#: oversight. Promoting one later is additive and breaks nothing; that is why
 #: the conservative list is the safe one to freeze at v1.
 __all__ = [
     "ANALYSIS_SCALE",

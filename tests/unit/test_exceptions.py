@@ -1,9 +1,8 @@
 """Tests for :mod:`itacart.exceptions`.
 
 Two things are being protected here: that a caller can guard the whole
-package with one ``except ITACaRTError``, and that the three names cited
-verbatim in later acceptance criteria keep both their spelling and their
-place in the hierarchy.
+package with one ``except ITACaRTError``, and that the three names callers
+catch by name keep both their spelling and their place in the hierarchy.
 """
 
 from __future__ import annotations
@@ -76,19 +75,19 @@ def test_hierarchy_shape(name: str, parent: str) -> None:
     ["ConvergenceError", "InvalidRefinementCodeError", "AntemeridianError"],
 )
 def test_load_bearing_names_exist(name: str) -> None:
-    """Cited verbatim by F1 crit. 5, F2 crit. 5 and F7 crit. 9."""
+    """Caught by name by callers of the solvers, the parser and the fill."""
     assert hasattr(exc, name)
     assert issubclass(getattr(exc, name), exc.ITACaRTError)
 
 
 def test_antemeridian_error_is_a_domain_error() -> None:
-    """F7 raises it; F4 callers catching DomainError must see it."""
+    """The fill raises it; callers catching DomainError must see it."""
     with pytest.raises(exc.DomainError):
         raise exc.AntemeridianError("crosses 180 outside an extension zone")
 
 
 def test_non_existent_cell_is_a_domain_error() -> None:
-    """The western X = 0 rule of F4 is a domain condition, not a syntax one."""
+    """The western X = 0 rule is a domain condition, not a syntax one."""
     assert issubclass(exc.NonExistentCellError, exc.DomainError)
     assert not issubclass(exc.NonExistentCellError, exc.InvalidIndexError)
 

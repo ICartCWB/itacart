@@ -3,7 +3,7 @@
 Two populations are described together because they are the same object
 seen through two doors. One is the set of cells whose child count leaves
 the refinement ratio; the other is the band of columns the filling
-refuses. Both live on the outer edge of a row, and a phase that treats
+refuses. Both live on the outer edge of a row, and a change that treats
 them as separate problems fixes one and leaves the other.
 
 Every number below came from a run over the whole resolution-1 grid --
@@ -354,7 +354,7 @@ def test_the_refused_band_profile_over_every_row_of_every_quadrant() -> None:
 
     Equality rather than a ceiling, because a ceiling lets the number rot
     in both directions: widening the band would still pass, and narrowing
-    it -- which is the point of this phase -- would pass without anyone
+    it -- which is the direction a repair moves it -- would pass without anyone
     having to lower the pin in the same commit.
     """
     widths: dict[str, dict[int, int]] = {quadrant: {} for quadrant in QUADRANTS}

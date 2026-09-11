@@ -7,22 +7,41 @@ Every function here accepts a compositional index. Where the input holds
 several cells, the return is positionally aligned with
 :func:`itacart.index.decompose`.
 
-Ascent and descent are not symmetric, and the asymmetry is the whole
-difficulty of this module. Ascent is a string operation: the parent is a
-prefix of the child, so it costs a slice and never consults the domain.
-Descent is not, because a cell whose outer side has been carried onto the
-domain border reaches east past its own nominal column, and some of its
-children are therefore spelled under the next column's resolution-1
-prefix. Those cells exist, they are addressed uniquely, and there are
-neither four nor twenty-five of them. Ascent from such a child lands on a
-string that is a well-formed prefix but names no cell.
+Two relations live here, and they coincide everywhere except at the
+domain border.
 
-The module answers this by keeping the two claims apart. Functions that
-ascend return prefixes and say so; :func:`itacart.boundary.is_valid_cell`
-is the only arbiter of whether a prefix names a cell. Functions that
-descend consult :func:`itacart.boundary.absorbs_border` first and take a
-purely lexical path when it answers false, which it does for every cell
-of the lattice except the last column of each row.
+*Lexical ancestry* relates spellings: one index is an ancestor of another
+when it is a prefix of it, which costs a slice and never consults the
+domain. :func:`get_parent`, :func:`is_ancestor` and :func:`contains`
+answer it, and :func:`itacart.boundary.is_valid_cell` is the only arbiter
+of whether a prefix they return names a cell.
+
+*Physical refinement* relates cells: the children of a cell are the cells
+that partition it. :func:`get_children`, :func:`get_descendants`,
+:func:`child_position`, :func:`compact_cells` and :func:`uncompact_cells`
+answer it, and so does the tree blob, whose compaction folds by the same
+rule. :func:`itacart.index.normalize` answers neither: it rewrites
+spelling, and withholds the one rewrite that would change the region.
+
+Away from the border the children of a cell are the codes of the next
+alphabet spelled under it, and the two relations are one. A cell whose
+outer side has been carried onto the domain border reaches east past its
+own nominal column, so some of its children are spelled under the next
+column's resolution-1 prefix: they exist and are addressed uniquely, but
+their prefix names no cell. Enumerated between resolutions 1 and 2, 2 392
+of the 4 002 absorbing cells of the lateral border father 3 327 such
+children under 2 437 prefixes that name no cell. Under the two caps the
+same happens deeper: 12 of the 88 cells at resolution 4 and 228 of the
+2 388 at resolution 5 are spelled under a prefix that names no cell. For
+each of those the lexical parent is a well-formed string that names no
+cell, :func:`contains` of the physical parent answers false, and the
+physical parent is found by refinement. Their descendants carry the prefix
+as a lexical ancestor; under the caps, the other 284 cells of resolution 5
+with such an ancestor are spelled under their physical parent.
+
+Functions that descend consult :func:`itacart.boundary.absorbs_border`
+first and take a purely lexical path when it answers false, which it does
+for every cell of the lattice except the border-absorbing family.
 """
 
 from __future__ import annotations
@@ -656,23 +675,27 @@ def _neighbouring_parents(components: Sequence[str], prefix: str) -> Iterator[st
     the siblings of the prefix, reached through the nearest ancestor that
     names a cell, which is the polar case and needs the child relation of
     that ancestor.
+
+    Only a cell below resolution 1 gets here. The prefix of a
+    resolution-1 cell is its quadrant, and every quadrant names a cell
+    that absorbs nothing, so :func:`_parent_cell` answers with it before
+    any neighbour is looked for.
     """
     from . import boundary
 
-    if len(components) > 2:
-        column_text, _, row_text = components[1].partition(RES1_SEPARATOR)
-        column, row = int(column_text), int(row_text)
-        side = CELL_SIZE_M[BASE_CELL_RESOLUTION]
-        assert side is not None
-        last = boundary.last_lattice_column(components[0], row, side)
-        # West as far as the absorbing column, not one step. A child can
-        # be spelled two columns past its parent -- ``NE(0819/0747(1))``
-        # belongs to ``NE(0817/0747)`` -- and a single step lands on a
-        # column that names no cell either.
-        for target in range(column - 1, last - 1, -1):
-            candidate = _shift_column(prefix, target - column)
-            if boundary.is_valid_cell(candidate):
-                yield candidate
+    column_text, _, row_text = components[1].partition(RES1_SEPARATOR)
+    column, row = int(column_text), int(row_text)
+    side = CELL_SIZE_M[BASE_CELL_RESOLUTION]
+    assert side is not None
+    last = boundary.last_lattice_column(components[0], row, side)
+    # West as far as the absorbing column, not one step. A child can be
+    # spelled two columns past its parent -- ``NE(0819/0747(1))`` belongs
+    # to ``NE(0817/0747)`` -- and a single step lands on a column that names
+    # no cell either.
+    for target in range(column - 1, last - 1, -1):
+        candidate = _shift_column(prefix, target - column)
+        if boundary.is_valid_cell(candidate):
+            yield candidate
 
     wanted = len(components) - 1
     for depth in range(wanted - 1, 1, -1):
@@ -853,15 +876,15 @@ def compact_cells(index: str) -> str:
     Runs to a fixed point, so a fully covered base cell collapses all the
     way to resolution 1.
 
-    Distinct from :func:`itacart.index.normalize`, and deliberately
-    stricter. Normalization collapses a parent as soon as the level
-    alphabet is complete, which overstates coverage under a
-    border-absorbing parent: four quaternary children spell the whole
-    alphabet, but such a parent may have five. Compaction counts the
-    children the parent actually has, so a partition that is incomplete
-    at the border is left uncompacted rather than silently claimed whole.
-    In short, normalize operates on index syntax; compact_cells operates
-    on the spatial semantics of the DGGS.
+    Distinct from :func:`itacart.index.normalize`. Normalization rewrites
+    spelling and never changes the region: it collapses a complete
+    alphabet away from the border and leaves a border-absorbing node as
+    written, because four quaternary children spell the whole alphabet
+    while such a parent may have five. Compaction counts the children the
+    parent actually has, so it folds an absorbing cell exactly when all of
+    them are present, whichever stem they are spelled under, and leaves a
+    partition that is incomplete at the border uncompacted rather than
+    claimed whole.
 
     Args:
         index: Compositional index string.

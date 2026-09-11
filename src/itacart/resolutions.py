@@ -20,14 +20,13 @@ itacart_core/resolutions.py      this module
 
 Values agree with the origin exactly, to zero ulps, on all 13 metric rows
 for side, area and both ratios. The one divergence is resolution 1 under
-:func:`is_tokenizable_resolution`, and it is F0's reading of the paper,
-not this
-phase's.
+:func:`is_tokenizable_resolution`, a reading of the paper that function
+explains.
 
 The module is a typed, validating facade over the tuples in
 :mod:`itacart.constants`. It restates no value from Table 1: every figure
-returned here is read from a constant that F0 audited against the paper,
-so a wrong row can only be wrong in one place.
+returned here is read from a constant audited against the paper, so a
+wrong row can only be wrong in one place.
 
 Two distinctions in this module are load-bearing and easy to get wrong.
 
@@ -461,9 +460,8 @@ def is_tokenizable_resolution(resolution: int) -> bool:
 
     Resolution 1 is a deliberate divergence from the origin, which
     enumerates only the odd levels. Its side of 10 km is 10^4 m and its
-    area 10^8 m2, so it satisfies the stated property; the paper does not
-    enumerate the set either way. F0 took that reading and
-    the choice remains F0's to revisit, not this phase's.
+    area 10^8 m2, so it satisfies the stated property, and the paper does
+    not enumerate the set either way.
 
     Provenance: ``itacart_core/engine.py`` (``IDGGSEngine``) and
     ``itacart_core/resolutions.py`` (``_TOKENIZABLE_RESOLUTIONS``).

@@ -59,7 +59,7 @@ def _alphabet_label(resolution: int) -> str:
 
 
 # --------------------------------------------------------------------------
-# Criterion 4 -- every constant of Table 1 checks out, value by value
+# Every constant of Table 1 checks out, value by value
 # --------------------------------------------------------------------------
 
 
@@ -139,8 +139,8 @@ def test_i3_analysis_scale_from_sampling_theory() -> None:
 def test_i4_area_is_the_square_of_the_side() -> None:
     """Base and height are equal, so nominal area is the side squared.
 
-    Not listed in the opening package, but it holds on all 13 metric rows
-    and it is the table-level statement of the equal-area property.
+    It holds on all 13 metric rows, and it is the table-level statement of
+    the equal-area property.
     """
     for resolution, side, area, _, _, _ in METRIC_ROWS:
         assert c.CELL_AREA_M2[resolution] == pytest.approx(side * side, rel=1e-12)
@@ -160,7 +160,7 @@ def test_resolution_table_agrees_with_the_component_tuples() -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 5 -- QUINARY_CODES, and the inversion trap
+# QUINARY_CODES, and the inversion trap
 # --------------------------------------------------------------------------
 
 
@@ -265,7 +265,8 @@ def test_res1_cell_counts_follow_from_the_projection() -> None:
     """2003 along the equator and 1000 along the meridian, both partial.
 
     The fractional part is what produces the partial last column and row
-    dealt with in F4; it is recorded here so the intent is not lost.
+    that :mod:`itacart.boundary` handles; it is recorded here so the intent is
+    not lost.
     """
     along_equator = c.EQUATOR_QUADRANT / 10_000.0
     along_meridian = c.MERIDIAN_QUADRANT / 10_000.0
@@ -385,10 +386,9 @@ def test_antarctica_is_not_an_extension_zone() -> None:
 
 
 def _sinusoidal_x(lon_deg: float, lat_deg: float) -> float:
-    """Eq. (1) of the paper, inlined so F0 does not depend on F1.
+    """Eq. (1) of the paper, inlined to check the constants without geodesy.
 
-    ``x = lambda * a cos(phi) / sqrt(1 - e^2 sin^2 phi)``. Once F1 lands,
-    this should be replaced by ``geodetic_to_sinusoidal``.
+    ``x = lambda * a cos(phi) / sqrt(1 - e^2 sin^2 phi)``.
     """
     lam = math.radians(lon_deg)
     phi = math.radians(lat_deg)

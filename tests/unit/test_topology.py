@@ -77,7 +77,7 @@ INTERIOR = "NE(0500/0300)"
 
 
 # --------------------------------------------------------------------------
-# Criterion 1: the lattice step
+# The lattice step
 # --------------------------------------------------------------------------
 
 
@@ -124,7 +124,7 @@ def test_cardinal_neighbours_share_an_edge(direction: str, expected: str) -> Non
     ],
 )
 def test_diagonal_neighbours_share_only_a_vertex(direction: str, expected: str) -> None:
-    """Criterion 6 rests on this: a diagonal is not an edge neighbour."""
+    """Edge adjacency rests on this: a diagonal is not an edge neighbour."""
     assert topology.get_neighbor(INTERIOR, direction) == expected
     assert share_only_a_vertex(INTERIOR, expected)
 
@@ -167,7 +167,7 @@ def test_edge_neighbours_account_for_the_whole_perimeter() -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 9: derivation is lexical, existence is a separate question
+# Derivation is lexical, existence is a separate question
 # --------------------------------------------------------------------------
 
 
@@ -214,7 +214,7 @@ def test_derivation_survives_without_the_existence_predicates(
 
 
 # --------------------------------------------------------------------------
-# Criterion 5: the boundary deflections
+# The boundary deflections
 # --------------------------------------------------------------------------
 
 
@@ -325,8 +325,8 @@ def test_a_zone_latitude_limit_sends_the_step_into_the_other_quadrant() -> None:
     """Where a zone starts, one quadrant is extended and its mirror truncated.
 
     The cell poleward of this one is therefore not in its own quadrant at all,
-    which no lexical rule can name and which neither of the two outcomes the
-    opening package predicted would have produced.
+    which no lexical rule can name, and which neither of the two outcomes a
+    lexical step can give would have produced.
     """
     neighbour = topology.get_neighbor("NW(0883/0708)", "N")
     assert neighbour == "NE(0884/0709)"
@@ -395,7 +395,7 @@ def test_deflect_is_the_identity_on_a_step_that_crosses_nothing() -> None:
 
 
 # --------------------------------------------------------------------------
-# Criteria 2, 3 and 4: descent through the refinement alphabets
+# Descent through the refinement alphabets
 # --------------------------------------------------------------------------
 
 QUINARY_PARENT = "NE(0500/0300(1))"
@@ -451,7 +451,7 @@ def test_a_step_inside_a_quaternary_parent(
 
 
 def test_the_eastern_step_off_child_two_leaves_the_parent() -> None:
-    """The falsification the amendment to criterion 2 asked for."""
+    """The falsification the descent through the alphabets has to survive."""
     neighbour = topology.get_neighbor("NE(0500/0300(2))", "E")
     assert neighbour == "NE(0501/0300(1))"
     assert neighbour != "NE(0500/0300(3))"
@@ -470,7 +470,7 @@ def test_the_eastern_step_off_child_two_leaves_the_parent() -> None:
 def test_leaving_the_parent_wraps_to_the_far_side(
     code: str, direction: str, expected: str
 ) -> None:
-    """Criterion 4, and the reason criterion 3's wrap-around is not a wrap.
+    """The ascent, and the reason the quinary wrap-around is not a wrap.
 
     Joining column five to column one of the *same* parent would return a cell
     four columns away. The wrap is to the neighbouring parent, and reaching it
@@ -580,12 +580,12 @@ def test_a_child_beside_a_triangle_is_measured_not_wrapped() -> None:
 
 
 # --------------------------------------------------------------------------
-# Criteria 6 and 7: edge adjacency and disk cardinality
+# Edge adjacency and disk cardinality
 # --------------------------------------------------------------------------
 
 
 def test_edge_adjacency_excludes_vertex_contact() -> None:
-    """Criterion 6. The diagonal touches, but touching is not adjacency."""
+    """The diagonal touches, but touching is not adjacency."""
     assert topology.are_neighbor_cells(INTERIOR, "NE(0499/0301)")
     assert not topology.are_neighbor_cells(INTERIOR, "NE(0500/0301)")
     assert share_only_a_vertex(INTERIOR, "NE(0500/0301)")
@@ -607,7 +607,7 @@ def test_adjacency_needs_one_resolution() -> None:
 
 
 def test_unit_disks_hold_nine_and_five_in_the_interior() -> None:
-    """Criterion 7, stated for the interior as the criterion itself is."""
+    """The disk cardinality, stated for the interior, where it is defined."""
     assert len(topology.grid_disk(INTERIOR, 1)) == 9
     assert len(topology.grid_disk(INTERIOR, 1, "manhattan")) == 5
     assert len(topology.grid_ring(INTERIOR, 1)) == 8
@@ -668,7 +668,7 @@ def test_dedupe_drops_the_overlap() -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 8: symmetry
+# Symmetry
 # --------------------------------------------------------------------------
 
 
@@ -893,9 +893,9 @@ def test_parent_cell_steps_west_when_the_prefix_names_no_cell() -> None:
     prefix is then a string that names nothing, and composing neighbourhood
     through it would ascend into the void.
 
-    Promoting the helper would add a public name and pull ``__init__.py`` into
-    this phase. Pinning it costs one test and fails loudly if a later phase
-    changes the signature or the westward step.
+    Promoting the helper would add a public name to ``__init__.py``. Pinning
+    it costs one test and fails loudly if a later change alters the signature
+    or the westward step.
     """
     assert _parent_cell("NE(0500/0300(1))") == "NE(0500/0300)"
 
@@ -1035,7 +1035,7 @@ def test_the_neighbour_set_never_holds_a_cell_that_is_not_touched() -> None:
 
 @pytest.mark.slow
 def test_unit_disk_membership_is_symmetric_across_the_border_families() -> None:
-    """Criterion 8 where the opening package expected it to fall.
+    """Symmetric membership where it would be most likely to fail.
 
     Every family at once: both zone limits in both zones, an ordinary seam, the
     row under the pole, the polar cells and the meridian triangles. Both
@@ -1272,7 +1272,7 @@ def test_a_directed_step_is_not_an_involution_where_rows_change_length() -> None
 
 
 def test_the_index_route_stays_lexical_and_the_exception_set_does_not() -> None:
-    """Criterion 9, with its scope stated instead of implied.
+    """Lexical derivation, with its scope stated instead of implied.
 
     The derivation consults nothing, anywhere: ``_lexical_target`` answers with
     every geometric function and both existence predicates replaced by raisers.
@@ -1280,8 +1280,8 @@ def test_the_index_route_stays_lexical_and_the_exception_set_does_not() -> None:
     Resolving a neighbour is a weaker claim, and the weakness is exactly the
     exception set. Outside it the step is arithmetic plus a validity question,
     so it survives with the rings unavailable. Inside it the neighbour is
-    measured, so it does not, and saying otherwise would make the criterion
-    vacuous rather than satisfied.
+    measured, so it does not, and saying otherwise would make the claim
+    vacuous rather than true.
     """
 
     def refuse(*args: object, **kwargs: object) -> object:
@@ -1336,8 +1336,8 @@ def test_a_step_inside_one_frame_is_never_checked_against_geometry() -> None:
 class TestRefusalsStayInsideTheHierarchy:
     """Three refusals that the package used to make from outside its own types.
 
-    The family goes back to the first phase, and repairing one member at a
-    time had already failed three times. What settles it is a line, not a
+    Repairing one member of the family at a time is what fails: what settles
+    it is a line, not a
     list: this hierarchy answers for what is wrong with an *index* or with
     the *domain*, and the built-in exceptions answer for an invalid value of
     an enumerated argument. Measured over every bare raise in ``src`` at the

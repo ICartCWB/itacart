@@ -1,7 +1,5 @@
 """Unit tests for :mod:`itacart.cells`.
 
-Covers acceptance criteria 1, 2, 3, 4, 5, 8 and 9 of F3.
-
 Two measurement notes, both learned the hard way while writing these.
 
 **Areas are measured locally.** The shoelace of a resolution-13 ring in
@@ -67,15 +65,13 @@ def plane_ring(cell: str) -> list[tuple[float, float]]:
 
 
 # ==========================================================================
-# Criterion 1 -- round trip through the anchor
+# Round trip through the anchor
 # ==========================================================================
 
 
 @pytest.mark.parametrize("resolution", RESOLUTIONS)
 @pytest.mark.parametrize("quadrant", sorted(QUADRANT_POINTS))
-def test_criterion_1_the_anchor_requantizes_to_its_own_cell(
-    resolution: int, quadrant: str
-) -> None:
+def test_the_anchor_requantizes_to_its_own_cell(resolution: int, quadrant: str) -> None:
     """The property the 1 um floor epsilon exists to buy.
 
     Without the epsilon the anchor, which sits exactly on two grid lines,
@@ -89,7 +85,7 @@ def test_criterion_1_the_anchor_requantizes_to_its_own_cell(
 
 
 @pytest.mark.parametrize("resolution", RESOLUTIONS)
-def test_criterion_1_projection_noise_stays_far_below_the_epsilon(
+def test_projection_noise_stays_far_below_the_epsilon(
     resolution: int,
 ) -> None:
     """The margin, measured rather than assumed.
@@ -111,14 +107,14 @@ def test_criterion_1_projection_noise_stays_far_below_the_epsilon(
 
 @pytest.mark.parametrize("resolution", RESOLUTIONS)
 @pytest.mark.parametrize("quadrant", sorted(QUADRANT_POINTS))
-def test_criterion_1_the_reference_cells_are_not_on_a_quadrant_axis(
+def test_the_reference_cells_are_not_on_a_quadrant_axis(
     resolution: int, quadrant: str
 ) -> None:
-    """The scoping of criterion 1, asserted rather than assumed.
+    """The scope of the anchor round trip, asserted rather than assumed.
 
-    The criterion holds for cells off the quadrant axes. If
-    a reference point ever drifted onto an axis, the criterion-1 test
-    above would start passing vacuously; this makes that impossible.
+    The round trip is stated for cells off the quadrant axes. If a
+    reference point ever drifted onto an axis, the round-trip test above
+    would start passing vacuously; this makes that impossible.
     """
     lon, lat = QUADRANT_POINTS[quadrant]
     cell = cells.geo_to_cell(lon, lat, resolution)
@@ -324,13 +320,13 @@ def test_resolution_zero_has_no_anchor() -> None:
 
 
 # ==========================================================================
-# Criterion 2 -- four vertices, counter-clockwise
+# Four vertices, counter-clockwise
 # ==========================================================================
 
 
 @pytest.mark.parametrize("resolution", RESOLUTIONS)
 @pytest.mark.parametrize("quadrant", sorted(QUADRANT_POINTS))
-def test_criterion_2_boundary_has_four_vertices(resolution: int, quadrant: str) -> None:
+def test_boundary_has_four_vertices(resolution: int, quadrant: str) -> None:
     lon, lat = QUADRANT_POINTS[quadrant]
     cell = cells.geo_to_cell(lon, lat, resolution)
     assert len(cells.cell_to_boundary(cell)) == 4
@@ -338,10 +334,10 @@ def test_criterion_2_boundary_has_four_vertices(resolution: int, quadrant: str) 
 
 @pytest.mark.parametrize("resolution", RESOLUTIONS)
 @pytest.mark.parametrize("quadrant", sorted(QUADRANT_POINTS))
-def test_criterion_2_ring_is_counter_clockwise_in_every_quadrant(
+def test_ring_is_counter_clockwise_in_every_quadrant(
     resolution: int, quadrant: str
 ) -> None:
-    """The half of criterion 2 that mirroring can break.
+    """The half of the counter-clockwise rule that mirroring can break.
 
     Reflection reverses orientation, so NW and SE -- one reflection each
     -- are where a naive re-signing yields a clockwise ring. SW composes
@@ -354,13 +350,13 @@ def test_criterion_2_ring_is_counter_clockwise_in_every_quadrant(
 
 
 @pytest.mark.parametrize("quadrant", sorted(QUADRANT_POINTS))
-def test_criterion_2_the_ring_starts_at_the_anchor(quadrant: str) -> None:
+def test_the_ring_starts_at_the_anchor(quadrant: str) -> None:
     lon, lat = QUADRANT_POINTS[quadrant]
     cell = cells.geo_to_cell(lon, lat, 9)
     assert cells.cell_to_boundary(cell)[0] == cells.cell_to_anchor(cell)
 
 
-def test_criterion_2_close_repeats_the_first_vertex() -> None:
+def test_close_repeats_the_first_vertex() -> None:
     cell = cells.geo_to_cell(13.0, 42.0, 9)
     ring = cells.cell_to_boundary(cell, close=True)
     assert len(ring) == 5
@@ -368,7 +364,7 @@ def test_criterion_2_close_repeats_the_first_vertex() -> None:
 
 
 @pytest.mark.parametrize("quadrant", sorted(QUADRANT_POINTS))
-def test_criterion_2_vertices_match_the_closed_form_of_the_paper(
+def test_vertices_match_the_closed_form_of_the_paper(
     quadrant: str,
 ) -> None:
     """Section 3, Figure 1: ``(x,y)``, ``(x+l,y)``, ``(x,y+l)``, ``(x-l,y+l)``.
@@ -392,12 +388,12 @@ def test_criterion_2_vertices_match_the_closed_form_of_the_paper(
 
 
 # ==========================================================================
-# Criterion 3 -- mirroring across all four quadrants
+# Mirroring across all four quadrants
 # ==========================================================================
 
 
 @pytest.mark.parametrize("resolution", RESOLUTIONS)
-def test_criterion_3_mirrored_positions_give_mirrored_indices(
+def test_mirrored_positions_give_mirrored_indices(
     resolution: int,
 ) -> None:
     """The rule stated literally in the paper, tested on all four.
@@ -422,7 +418,7 @@ def test_criterion_3_mirrored_positions_give_mirrored_indices(
         assert components[1:] == reference[1:]
 
 
-def test_criterion_3_the_southwest_composes_both_reflections() -> None:
+def test_the_southwest_composes_both_reflections() -> None:
     """SW is the case the origin's ``abs()`` gets right by accident.
 
     Two reflections restore orientation, so a bug that only checks
@@ -437,11 +433,11 @@ def test_criterion_3_the_southwest_composes_both_reflections() -> None:
 
 
 # ==========================================================================
-# Criterion 4 -- single traversal
+# Single traversal
 # ==========================================================================
 
 
-def test_criterion_4_descent_visits_each_level_exactly_once(
+def test_descent_visits_each_level_exactly_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Structural, as the amendment asks. Not a clock reading.
@@ -463,7 +459,7 @@ def test_criterion_4_descent_visits_each_level_exactly_once(
     assert calls == list(range(2, 14))
 
 
-def test_criterion_4_ascent_visits_each_level_exactly_once(
+def test_ascent_visits_each_level_exactly_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[int] = []
@@ -488,14 +484,13 @@ def test_criterion_4_ascent_visits_each_level_exactly_once(
     assert calls == list(range(2, 14)) * 2
 
 
-def test_criterion_4_cost_grows_linearly_not_quadratically() -> None:
+def test_cost_grows_linearly_not_quadratically() -> None:
     """The complexity claim, as a ratio rather than an absolute time.
 
     Doubling the depth roughly doubles the work under a single traversal
     and roughly quadruples it under the origin's recursion. The bound is
     deliberately loose: this runs on the CI matrix, where the machine
-    varies, and the lesson of earlier phases is that hand-written numbers do not
-    survive. The measured figure goes in the handoff, not here.
+    varies, and hand-written timing numbers do not survive it.
     """
 
     def elapsed(resolution: int, repeats: int = 300) -> float:
@@ -510,15 +505,13 @@ def test_criterion_4_cost_grows_linearly_not_quadratically() -> None:
 
 
 # ==========================================================================
-# Criterion 5 -- the centroid exists and is geodetic
+# The centroid exists and is geodetic
 # ==========================================================================
 
 
 @pytest.mark.parametrize("resolution", RESOLUTIONS)
 @pytest.mark.parametrize("quadrant", sorted(QUADRANT_POINTS))
-def test_criterion_5_centroid_is_a_geodetic_position(
-    resolution: int, quadrant: str
-) -> None:
+def test_centroid_is_a_geodetic_position(resolution: int, quadrant: str) -> None:
     lon, lat = QUADRANT_POINTS[quadrant]
     cell = cells.geo_to_cell(lon, lat, resolution)
     centroid_lon, centroid_lat = cells.cell_to_centroid(cell)
@@ -527,7 +520,7 @@ def test_criterion_5_centroid_is_a_geodetic_position(
 
 
 @pytest.mark.parametrize("quadrant", sorted(QUADRANT_POINTS))
-def test_criterion_5_centroid_sits_half_a_side_above_the_anchor(
+def test_centroid_sits_half_a_side_above_the_anchor(
     quadrant: str,
 ) -> None:
     """For a parallelogram the four-vertex mean collapses to this.
@@ -544,22 +537,20 @@ def test_criterion_5_centroid_sits_half_a_side_above_the_anchor(
     assert centroid_y == pytest.approx(anchor_y + sign_y * side / 2.0, abs=1e-6)
 
 
-def test_criterion_5_centroid_differs_from_the_anchor() -> None:
+def test_centroid_differs_from_the_anchor() -> None:
     """The anchor and the centroid are different points, stated once."""
     cell = cells.geo_to_cell(13.0, 42.0, 5)
     assert cells.cell_to_centroid(cell) != cells.cell_to_anchor(cell)
 
 
 # ==========================================================================
-# Criterion 8 -- equal area, measured from the reprojected boundary
+# Equal area, measured from the reprojected boundary
 # ==========================================================================
 
 
 @pytest.mark.parametrize("resolution", RESOLUTIONS)
 @pytest.mark.parametrize("quadrant", sorted(QUADRANT_POINTS))
-def test_criterion_8_measured_area_matches_the_nominal_area(
-    resolution: int, quadrant: str
-) -> None:
+def test_measured_area_matches_the_nominal_area(resolution: int, quadrant: str) -> None:
     """Under 0.01%, from the geodetic ring projected back onto the plane.
 
     This is the equal-area property end to end: the boundary goes out
@@ -573,7 +564,7 @@ def test_criterion_8_measured_area_matches_the_nominal_area(
     assert abs(measured / nominal - 1.0) < 1e-4
 
 
-def test_criterion_8_area_is_the_same_at_the_equator_and_near_the_pole() -> None:
+def test_area_is_the_same_at_the_equator_and_near_the_pole() -> None:
     """Equal area means equal area, not equal-area-where-convenient."""
     equator = cells.geo_to_cell(30.0, 0.5, 5)
     polar = cells.geo_to_cell(15.6469, 78.2232, 5)  # Longyearbyen
@@ -583,24 +574,24 @@ def test_criterion_8_area_is_the_same_at_the_equator_and_near_the_pole() -> None
 
 
 # ==========================================================================
-# Criterion 9 -- the three orientations, pinned by name
+# The three orientations, pinned by name
 # ==========================================================================
 
 
-def test_criterion_9_orientation_1_the_y_index_grows_northward() -> None:
+def test_orientation_1_the_y_index_grows_northward() -> None:
     """Measured, against the paper's prose, which reads the other way.
 
     Two positions on the same meridian: the northern one must carry the
     larger Y. The geodesy suite measures the same thing on the projection;
     this pins
-    it on the index, which is what F4 and F6 consume.
+    it on the index, which is what the boundary and topology modules consume.
     """
     south = split_components(cells.geo_to_cell(20.0, 10.0, 1))[1]
     north = split_components(cells.geo_to_cell(20.0, 20.0, 1))[1]
     assert int(north.split("/")[1]) > int(south.split("/")[1])
 
 
-def test_criterion_9_orientation_2_codes_1_and_2_sit_on_the_southern_row() -> None:
+def test_orientation_2_codes_1_and_2_sit_on_the_southern_row() -> None:
     """The 2x2 quaternary layout of Figure 3(c).
 
     Two positions inside one resolution-1 cell, differing only in
@@ -620,11 +611,11 @@ def test_criterion_9_orientation_2_codes_1_and_2_sit_on_the_southern_row() -> No
     assert north_code in {"3", "4"}
 
 
-def test_criterion_9_orientation_3_the_letter_grows_from_a_south_to_e_north() -> None:
+def test_orientation_3_the_letter_grows_from_a_south_to_e_north() -> None:
     """The 5x5 quinary layout of Figure 3(d).
 
     Row ``A`` is the southern row. The vertical wrap-around ``E <-> A``
-    that F6 will rely on inherits its sign from this.
+    that :mod:`itacart.topology` relies on inherits its sign from this.
     """
     parent = cells.geo_to_cell(20.0, 10.0, 2)
     base_x, base_y = _anchor_on_plane(parent)[:2]
@@ -733,10 +724,9 @@ def test_both_sides_of_the_meridian_address_the_same_eastern_column(
 def test_the_antemeridian_is_addressable_rather_than_refused(lon: float) -> None:
     """At 42 degrees north there is no extension, so the line is a hard edge.
 
-    F3 refused a half-degree band around it outright. The band was a
-    stand-in: half a degree is the precision the extension limits are
-    quoted to, not an exclusion zone, and the paper asks for clipped
-    cells here rather than none.
+    A half-degree band around it is not an exclusion zone: half a degree is
+    the precision the extension limits are quoted to, and the paper asks
+    for clipped cells here rather than none.
     """
     cell = cells.geo_to_cell(lon, 42.0, 9)
     assert boundary.is_valid_cell(cell) is True
@@ -905,6 +895,119 @@ def test_a_cap_answer_holds_its_position_within_a_chord() -> None:
             lon,
             lat,
         )
+
+
+#: The population the cap repair was measured on: 25 latitudes from 89.9824
+#: degrees to the pole, 49 longitudes 7.5 degrees apart, both hemispheres and
+#: every resolution from 2 to 13 -- 29 400 positions. Before the repair, 2 064
+#: of its answers named no cell, 414 distinct spellings among them, at every
+#: resolution; every answer the repair changed was one of those.
+CAP_GRID_LATITUDES = tuple(89.9824 + k * (90.0 - 89.9824) / 24 for k in range(25))
+CAP_GRID_LONGITUDES = tuple(-180.0 + 7.5 * k for k in range(49))
+
+
+def _cap_grid() -> list[tuple[float, float, int]]:
+    return [
+        (lon, sign * lat, resolution)
+        for resolution in range(2, 14)
+        for sign in (1.0, -1.0)
+        for lat in CAP_GRID_LATITUDES
+        for lon in CAP_GRID_LONGITUDES
+    ]
+
+
+@pytest.mark.slow
+def test_every_cap_answer_on_the_measured_population_names_a_cell() -> None:
+    """The repair holds over the whole population it was measured on."""
+    answers = [cells.geo_to_cell(lon, lat, res) for lon, lat, res in _cap_grid()]
+    assert len(answers) == 29_400
+    assert all(boundary.is_valid_cell(answer) for answer in answers)
+
+
+@pytest.mark.slow
+def test_the_cap_answers_are_the_same_in_a_fresh_process() -> None:
+    """Where existing cells overlap, the answer does not depend on the process.
+
+    The canonical choice could in principle follow from state -- a cache
+    warmed in another order, a set iterated in another order. A second
+    interpreter, importing this same package, answers the population in
+    reverse order and must give back every answer this one gives.
+    """
+    import json
+    import os
+    import subprocess
+    import sys
+
+    import itacart
+
+    positions = _cap_grid()
+    here = [cells.geo_to_cell(lon, lat, res) for lon, lat, res in positions]
+    source = os.path.dirname(os.path.dirname(itacart.__file__))
+    script = (
+        "import json, sys\n"
+        "import itacart\n"
+        "positions = json.load(sys.stdin)\n"
+        "answers = [itacart.geo_to_cell(lon, lat, res)\n"
+        "           for lon, lat, res in reversed(positions)]\n"
+        "json.dump({'file': itacart.__file__, 'answers': answers[::-1]}, sys.stdout)\n"
+    )
+    path = os.pathsep.join(filter(None, (source, os.environ.get("PYTHONPATH"))))
+    run = subprocess.run(
+        [sys.executable, "-c", script],
+        input=json.dumps(positions),
+        capture_output=True,
+        text=True,
+        check=True,
+        env=dict(os.environ, PYTHONPATH=path),
+    )
+    there = json.loads(run.stdout)
+    assert there["file"] == itacart.__file__
+    assert there["answers"] == here
+
+
+#: Spellings the cap quantizer answered on that population before the repair,
+#: none of which names a cell: one per resolution, the middle one of that
+#: resolution's list, the hemispheres alternating.
+CORRECTED_CAP_SPELLINGS = (
+    (-180.0, 89.9846, 2, "NE(0000/1000(2))"),
+    (127.5, -89.99486666666667, 3, "SE(0000/1000(1(B3)))"),
+    (-157.5, 89.99706666666667, 4, "NE(0000/1000(1(C2(4))))"),
+    (-172.5, -89.99413333333334, 5, "SE(0000/1000(1(D2(1(D3)))))"),
+    (-180.0, 89.99413333333334, 6, "NE(0000/1000(1(B4(1(D4(2))))))"),
+    (-180.0, -89.99193333333334, 7, "SE(0000/1000(1(B4(2(A4(4(B5)))))))"),
+    (180.0, 89.99119999999999, 8, "NE(0000/1000(1(A5(3(E1(4(D3(1))))))))"),
+    (180.0, -89.99046666666666, 9, "SE(0000/1000(1(A5(3(E3(1(A5(2(A2)))))))))"),
+    (-180.0, 89.99193333333334, 10, "NE(0000/1000(1(B4(2(A4(4(B5(2(E1(3))))))))))"),
+    (180.0, -89.99193333333334, 11, "SE(0000/1000(1(B4(2(A4(4(B5(2(E1(3(C4)))))))))))"),
+    (
+        180.0,
+        89.99046666666666,
+        12,
+        "NE(0000/1000(1(A5(3(E3(1(A5(2(A2(3(E2(1))))))))))))",
+    ),
+    (
+        -180.0,
+        -89.99193333333334,
+        13,
+        "SE(0000/1000(1(B4(2(A4(4(B5(2(E1(3(C4(1(D1)))))))))))))",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "lon, lat, resolution, spelling",
+    CORRECTED_CAP_SPELLINGS,
+    ids=[f"resolution-{case[2]}" for case in CORRECTED_CAP_SPELLINGS],
+)
+def test_a_spelling_the_cap_quantizer_used_to_answer_is_not_answered_again(
+    lon: float, lat: float, resolution: int, spelling: str
+) -> None:
+    """At the position that produced it, the answer now exists and is not it."""
+    assert not boundary.is_valid_cell(spelling)
+    answer = cells.geo_to_cell(lon, lat, resolution)
+    assert boundary.is_valid_cell(answer)
+    assert answer != spelling
+    assert cells.geo_to_cell(lon, lat, resolution) == answer
 
 
 @pytest.mark.parametrize("bogus", [float("nan"), float("inf")])

@@ -213,11 +213,10 @@ def test_the_census_reaches_the_whole_surface() -> None:
     assert tally["no-arguments"] == 4
     # Equality, not a floor. A floor lets the pin rot in both directions:
     # a consumer that quietly leaves the census still clears it, and so
-    # does one that arrives without anyone deciding it belongs. This phase
-    # moved the consumer set, which is the moment to stop deferring the
-    # conversion. Fifty-nine is the count of public names; the sweep below
-    # runs over sixty, because the facade method the census reaches is not
-    # itself a name in ``__all__``. Both are pinned, so a consumer leaving
+    # does one that arrives without anyone deciding it belongs. Fifty-nine
+    # is the count of public names; the sweep below runs over sixty, because
+    # the facade method the census reaches is not itself a name in
+    # ``__all__``. Both are pinned, so a consumer leaving
     # either set fails here.
     assert tally["consumer"] == 59
     assert len(_consumers()) == 60
@@ -275,7 +274,7 @@ def test_the_stub_exemption_expires_by_itself() -> None:
     An exemption that merely names functions goes stale the moment one of
     them starts working, and the surface silently stops being measured.
     Asserting that each still raises turns the exemption red on the day
-    the next phase implements it, which is the only way the isolation
+    an implementation lands, which is the only way the isolation
     ends by construction rather than by someone remembering.
     """
     for name in UNIMPLEMENTED_STUBS:
@@ -524,8 +523,8 @@ def _call(name: str, argument: str) -> None:
     function(value, *EXTRA_ARGUMENTS.get(name, ()))
 
 
-#: Escapes this instrument found and this phase may not repair, because the
-#: defect is in the core and the core is another phase's to touch. Pinned by
+#: Escapes this instrument finds whose repair belongs to the core rather than
+#: to the instrument. Pinned by
 #: number rather than marked expected: a bare count says how much is wrong,
 #: where an expectation marker only says that something is, and lets a
 #: worsening go on passing.
@@ -534,7 +533,7 @@ def _call(name: str, argument: str) -> None:
 #: and can still be checked; absence is an assertion nobody makes any more,
 #: which is the reasoning of the stub table above it.
 #:
-#: It held one entry until this phase. ``cells_to_directed_edge`` refused a
+#: It held one entry. ``cells_to_directed_edge`` refused a
 #: cardinality mismatch with a bare ``ValueError`` while its two siblings
 #: over the same argument shape refused the identical situation with
 #: ``NonAtomicIndexError``; it now refuses with ``DomainError``, the type it

@@ -78,9 +78,9 @@ def sydney_cell() -> str:
     """Atomic index for the Sydney Opera House, resolution 7.
 
     The string is what ``geo_to_cell`` returns for the opera house at
-    resolution 7, and ``test_index.py`` has pinned it as a seven-level
-    path since F2. The docstring said nine, which is the discrepancy
-    ``test_fixture_invariants.py`` now forbids for every cell fixture.
+    resolution 7, and ``test_index.py`` pins it as a seven-level path.
+    ``test_fixture_invariants.py`` holds every cell fixture's declared
+    resolution to the one its string carries.
     """
     return "SE(1400/0374(3(C2(3(C2(4(C1)))))))"
 

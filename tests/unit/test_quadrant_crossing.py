@@ -248,9 +248,9 @@ def _produced_indices() -> list[str]:
 def test_every_index_the_package_produces_survives_a_round_trip(index: str) -> None:
     """What one function emits, the others take.
 
-    Written against the shape of ``B-8.4``: a codec refused the canonical
-    output of ``compose`` for nearly a year of phases because every test
-    it had fed it indices it had built itself.
+    A consumer tested only on indices it built itself can refuse the
+    canonical output of ``compose`` and still pass every one of its tests,
+    so each consumer here is fed what ``compose`` emits.
     """
     assert itacart.count_cells(index) >= 1
     assert itacart.normalize(index)
@@ -273,9 +273,9 @@ def test_the_widened_window_stops_at_the_cells_that_reach_both_axes(
 ) -> None:
     """The fourth quadrant is searched only where a ring reaches both axes.
 
-    Scoped deliberately. The seam is not this phase's subject and its
-    behaviour is not this phase's to change, so what is pinned is that
-    the change cannot reach it: a cell at the last lattice column takes
+    Scoped deliberately. The seam is not what this search is for, and its
+    behaviour is not changed by it, so what is pinned is that the search
+    cannot reach it: a cell at the last lattice column takes
     the same three-quadrant window it always took.
     """
     west, south, east, north = topology._ring(cell).bounds
@@ -427,8 +427,7 @@ def test_land_east_of_the_dateline_is_addressed_without_crossing_it() -> None:
 
     An extension zone lets a row's domain run past 180 degrees so that
     the land beyond the line is reached from the near side. Without this
-    written down, a later phase reads the refusal as a defect and
-    "fixes" it.
+    written down, the refusal reads as a defect and gets "fixed".
     """
     fiji = itacart.geo_to_cell(179.9, -16.6, 4)
     chukotka = itacart.geo_to_cell(-179.9, 66.0, 4)
@@ -695,8 +694,8 @@ def test_a_polygon_inside_one_cell_covers_nothing_under_the_other_modes(
     region smaller than a cell holds no centre; under ``contains`` it holds
     no whole cell either. Both are the documented meaning, and both mean
     that ``polyfill`` is not a generalisation of ``geo_to_cell`` outside
-    ``intersects``. Recorded here so that a later phase changing it knows
-    it is changing something, and that ``center`` is the default.
+    ``intersects``. Recorded here so that a change to it is made knowingly,
+    and so that ``center`` is seen to be the default.
     """
     region = box(
         30.0 - INSIDE_ONE_CELL,

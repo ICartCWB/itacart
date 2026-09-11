@@ -1,6 +1,6 @@
 """Tests for :mod:`itacart.index`.
 
-The suite is organised by acceptance criterion of F2, then by surface.
+The suite is organised by property of the index, then by surface.
 The tests around the even and odd alphabets are permanent regression
 guards: the prototype mapped even resolutions to ``A1``-``E5`` and odd
 ones to ``1``-``4``, which is the inversion the paper's section 3.1
@@ -82,7 +82,7 @@ CORPUS: tuple[str, ...] = (
 
 
 # --------------------------------------------------------------------------
-# Criterion 1 - Figure 7 round-trip
+# Figure 7 round-trip
 # --------------------------------------------------------------------------
 
 
@@ -143,7 +143,7 @@ def test_sydney_cell_is_a_resolution_7_single_path(sydney_cell: str) -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 2 - completeness collapse
+# Completeness collapse
 # --------------------------------------------------------------------------
 
 
@@ -152,7 +152,7 @@ def test_normalize_collapses_a_complete_quaternary_set() -> None:
 
 
 def test_normalize_collapses_a_complete_quaternary_set_under_a_quinary_parent() -> None:
-    """The realisable form of criterion 2's ``4(1,2,3,4)`` example.
+    """The realisable form of the ``4(1,2,3,4)`` collapse example.
 
     A quaternary child list can only hang off a resolution-1 node or off a
     quinary one, never off a quaternary one — see the test below.
@@ -163,13 +163,13 @@ def test_normalize_collapses_a_complete_quaternary_set_under_a_quinary_parent() 
 
 
 @pytest.mark.parametrize("resolution", [2, 4, 6, 8, 10, 12])
-def test_criterion_2_literal_example_is_unrealisable(resolution: int) -> None:
+def test_literal_example_is_unrealisable(resolution: int) -> None:
     """``4(1,2,3,4)`` is not a valid fragment at any level.
 
     ``4`` is a quaternary code, so it lives at an even resolution, so its
     children are odd and therefore quinary. The alternating refinement
-    makes a quaternary node with quaternary children impossible. The
-    briefing's criterion 2 quotes this string; the property it stands for
+    makes a quaternary node with quaternary children impossible. The string
+    is the usual illustration of normalisation; the property it stands for
     is closed by the two collapse tests above, not by this one.
     """
     node_four = _chain_to(resolution, tail="")
@@ -233,7 +233,7 @@ def test_normalize_orders_quadrants_by_the_table_order() -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 3 - idempotence
+# Idempotence
 # --------------------------------------------------------------------------
 
 
@@ -265,7 +265,7 @@ def test_normalize_is_idempotent_on_figure_7(central_park_index: str) -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 4 - OGC Req 13, one canonical form per region
+# OGC Req 13, one canonical form per region
 # --------------------------------------------------------------------------
 
 #: Groups of spellings. Within a group every spelling denotes the same
@@ -335,7 +335,7 @@ def test_req_13_canonical_form_survives_a_decompose_compose_detour() -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 5 -- the even/odd alphabets
+# The even/odd alphabets
 # --------------------------------------------------------------------------
 
 
@@ -386,7 +386,7 @@ def test_rejection_names_the_expected_alphabet() -> None:
 
 
 def test_invalid_refinement_code_is_an_invalid_index_error() -> None:
-    """F2 phases downstream guard on the parent class, so the link matters."""
+    """Callers guard on the parent class, so the link matters."""
     assert issubclass(InvalidRefinementCodeError, InvalidIndexError)
     assert issubclass(InvalidIndexError, ITACaRTError)
 
@@ -397,7 +397,7 @@ def test_codes_outside_every_alphabet_are_refused(code: str) -> None:
 
 
 # --------------------------------------------------------------------------
-# Criterion 6 - deterministic decompose order
+# Deterministic decompose order
 # --------------------------------------------------------------------------
 
 

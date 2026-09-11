@@ -478,8 +478,8 @@ class TestCore:
     def test_req_16_quantization(self) -> None:
         """Vector data maps to cell sets via polyfill and vertex_to_cell.
 
-        Completed by F7, which supplied both halves of the operation the
-        requirement names. Quantization is the map from vector data to a
+        Both halves of the operation the requirement names are in place.
+        Quantization is the map from vector data to a
         cell set at a stated resolution, and the requirement is about
         vector data rather than about polygons, so all three dimensions
         are asserted.
@@ -527,7 +527,7 @@ class TestCore:
     def test_req_17_topological_queries(self) -> None:
         """Parent, child and neighbour resolve from the index alone.
 
-        Completed by F6. The neighbour half is the part that had no prior
+        The neighbour half is the part that had no prior
         art: it is checked here by composing a step and its opposite, which
         can only return to the origin if the arithmetic and the tessellation
         agree.
@@ -551,7 +551,7 @@ class TestCore:
     def test_req_18_19_interoperability(self) -> None:
         """Cells export to GeoJSON and WKT, and come back.
 
-        Completed by F9b. The requirement names two encodings, and the
+        The requirement names two encodings, and the
         paper's compliance table marks them met by design; a concrete
         exporter is what turns that into something CI can check.
 
@@ -630,7 +630,7 @@ class TestEAERS:
         its exceptions. A reference system may declare ``cellEqualSized``
         and hold it for most of its domain; declaring it while three cell
         families do not hold it, and saying nothing about them, is the
-        failure mode this whole phase exists to avoid.
+        failure mode the declaration exists to avoid.
         """
         described = itacart.describe()
         assert described["domain"]["extent"] == "whole surface of the WGS84 ellipsoid"
