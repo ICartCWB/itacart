@@ -22,6 +22,40 @@ centimetres, which is smaller than a cell only down to resolution 10; from
 resolution 11 the whole cell is narrower than one rounding step and any
 rounding collapses it into a degenerate polygon that is still syntactically
 valid GeoJSON. Emitting full precision costs bytes and never lies.
+
+**Export and recovery are an inverse pair. Export and refill are not.**
+:func:`cells_to_geojson` writes the index into the Feature ``id`` member and
+the cell's vertices into the geometry; :func:`recover_from_geojson` reads the
+index back out of the Feature. The pair returns the cell it was handed, and
+it does so because the index travelled with the Feature rather than being
+inferred from the coordinates. That is the scope of the claim and it is
+stated rather than implied: a recovery handed a Feature whose geometry
+belongs to another cell still answers the original index, and a named test
+does exactly that. The geometry is exact in its own right, and separately --
+the exported vertices, joined again as straight segments in the sinusoidal
+plane, rebuild the cell to within a unit in the last place.
+
+Taking the exported polygon for a new geographic geometry -- joining its
+positions along the ellipsoid and filling the result -- is neither half of
+that pair. It is reingestion of a rendering, and nothing here promises it
+returns the cell.
+
+**What reingestion costs, measured.** Row 999 at resolution one holds exactly
+six cells: four in the last column, one per quadrant, each absorbing the
+border, and two prime-meridian triangles, which exist in the eastern
+quadrants only because the western quadrants have no meridian column. Six is
+the enumerated total of that row, not a sample of it. With orthodromic
+densification at one kilometre the reingested outline covers 33.1111 per cent
+of an absorber and 51.6779 per cent of a triangle. **Both figures are
+readings of that step rather than properties of the grid**: refined, they
+settle near 33.03 and 51.57 per cent, and the declared readings and the
+settled ones are pinned together, so neither can be read as the other. Handed
+such an outline, :func:`~itacart.polyfill` under ``center`` raises rather than
+answering an empty cover, because the figure that comes back holds no cell
+centre; under ``intersects`` the cell is in the answer along with others the
+outline touches; :func:`recover_from_geojson` returns the cell. An ordinary
+cell loses less than a thousandth of its figure on the same route, so the
+refusal belongs to this row and not to the route.
 """
 
 from __future__ import annotations

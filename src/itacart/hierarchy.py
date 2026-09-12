@@ -42,6 +42,57 @@ with such an ancestor are spelled under their physical parent.
 Functions that descend consult :func:`itacart.boundary.absorbs_border`
 first and take a purely lexical path when it answers false, which it does
 for every cell of the lattice except the border-absorbing family.
+
+**The absorbing side is a chord, and a child's chord is not its parent's.**
+This is the geometric half of the same parting, and it is a declared
+limitation of this version rather than a defect awaiting repair. The
+domain border is a smooth convex curve on the plane, and an absorbing cell
+replaces its outer side by the chord of that curve across its own height.
+A parent spans one cell height and takes one chord; each child spans half
+that and takes two, and a chord of a convex curve over a shorter span lies
+further out. So a child of an absorbing cell reaches past its parent's
+effective ring, by construction rather than by accident, and no
+enumeration order changes it.
+
+Measured over 572 lateral parents -- the last column of every seventh row
+in four quadrants -- every parent is affected and exactly two children of
+each leave, which is 1 144 children. The share of a child's own area
+falling outside its parent has a median of 0.038142 per cent, a mean of
+0.056931, a ninetieth percentile of 0.104096 and a worst case of 2.411015
+at ``SE(1930/0196)``. The excess has a closed form: the sagitta of the
+border across the parent's height, times half that height, to four decimal
+places. Every figure in this paragraph is fixed by a named test, and those
+tests fail if the absorbing side stops being a per-cell chord.
+
+What the approximation does not cost is stated with the same care, because
+a limitation whose edges are not drawn is read as larger than it is. The
+children still cover the parent: the shortfall stays under one part in a
+million of the parent's area, measured at 1.1e-12 over those 572 parents
+and 2.1e-16 under the caps. The criterion that bounds it is one-sided by
+design -- it bounds the shortfall and says nothing about the excess, which
+is this section's subject, so it must not be read as saying the cover is
+exact or the summed child area a fixed multiple of the parent's. Neither
+is true here. Quantisation stays total and deterministic: a position
+inside the excess is answered by the child whose excess it is at the
+child's resolution, and by the parent at the parent's, in a fresh
+interpreter as in this one. No public name has to emit a spelling
+:func:`itacart.boundary.is_valid_cell` denies because of any of it.
+Physical refinement preserves the region, so :func:`itacart.index.normalize`
+does not grow one and compaction still folds by the children a parent has.
+
+What it does cost is :func:`contains`, which tests the effective chordal
+ring. A query bounded by the domain border can leave out a leaf whose
+effective geometry protrudes past the query's own piece, by a few square
+metres or by a few thousand, and under ``contains`` that leaf is not kept.
+Measured on row 300 in four quadrants, with the parent's effective ring as
+the query, one leaf of three is kept at resolution 2 and 53 of 63 at
+resolution 3, while ``intersects`` returns the whole family. That is the
+excess asked about from outside instead of from the parent, not a second
+defect and not a defect of ``contains``.
+
+Representing the border exactly would mean carrying a side, a resolution-1
+row and an interval instead of a ring. That was investigated and is not in
+this version.
 """
 
 from __future__ import annotations

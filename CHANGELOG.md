@@ -5,6 +5,12 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Licence migrated from MIT to BSD 3-Clause. Both are permissive and neither
+  restricts use; the third clause of BSD 3-Clause is the difference, and it
+  withholds the right to use the copyright holder's name to endorse derived
+  products without written permission.
+
 ### Fixed
 - `build-system` required `setuptools>=61`, incompatible with the SPDX form
   `license = "MIT"` (PEP 639). Raised to `>=77`.

@@ -6,7 +6,7 @@ directly on the WGS84 ellipsoid.
 
 [![PyPI](https://img.shields.io/pypi/v/itacart)](https://pypi.org/project/itacart/)
 [![DOI](https://img.shields.io/badge/DOI-10.14393%2Frbcv77n0a--79281-blue)](https://doi.org/10.14393/rbcv77n0a-79281)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: BSD 3-Clause](https://img.shields.io/badge/License-BSD_3--Clause-green.svg)](LICENSE)
 
 > **Status:** alpha. The public API is defined and documented; implementations are
 > landing module by module.
@@ -154,4 +154,4 @@ conformance test suite verifies it in CI.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+BSD 3-Clause. See [LICENSE](LICENSE).

@@ -726,6 +726,234 @@ def test_the_exported_polygon_is_not_the_cell_by_shape() -> None:
 
 
 # --------------------------------------------------------------------------
+# Two routes leave a cell, and only one of them is an inverse
+# --------------------------------------------------------------------------
+
+#: The row the declaration is measured over. It is the last row before the
+#: cap, and it holds the largest departure in the grid.
+_DECLARED_ROW = 999
+
+#: The orthodromic step the declared coverage figures are read at. It is
+#: the default of :func:`itacart.densify_orthodromic`, and the figures move
+#: with it, so no coverage number in this file is written without it.
+_DECLARED_STEP_M = 1000.0
+
+#: Coverage of the reingested outline at ``_DECLARED_STEP_M``, by family,
+#: with the count of cells in each. Enumerated, not sampled: six is the
+#: whole of row 999 at resolution one.
+_REINGESTED_COVERAGE = {
+    "trapezoid": (4, 0.331111),
+    "triangle": (2, 0.516779),
+}
+
+#: The same coverage read with the step refined until it stops moving.
+#: The gap between this and the figures above is the point of pinning
+#: both: neither number is a property of the grid.
+_CONVERGED_COVERAGE = {
+    "trapezoid": 0.330251,
+    "triangle": 0.515698,
+}
+
+
+def _plane_area(cell: str) -> float:
+    """Area of the cell on the plane its edges are straight in."""
+    return float(Polygon(plane_ring(cell)[1]).area)
+
+
+def _rebuilt_in_the_plane(cell: str) -> Polygon:
+    """The exported ring read back as straight segments in the plane."""
+    collection = interop.cells_to_geojson(cell)
+    ring = collection["features"][0]["geometry"]["coordinates"][0]
+    return Polygon([itacart.geodetic_to_sinusoidal(lon, lat) for lon, lat in ring])
+
+
+def _reingested(cell: str, step_m: float = _DECLARED_STEP_M) -> Polygon:
+    """The exported ring read back as a geodesic outline.
+
+    This is not an inverse of the export. It is what a consumer does when
+    it takes the exported polygon for a new geographic geometry: joins the
+    positions along the ellipsoid, which RFC 7946 does not ask for and
+    which draws a different figure.
+    """
+    outline = itacart.cell_to_polygon(cell)
+    assert isinstance(outline, Polygon)
+    dense = itacart.densify_orthodromic(outline, max_segment_m=step_m)
+    return Polygon(
+        [itacart.geodetic_to_sinusoidal(lon, lat) for lon, lat in dense.exterior.coords]
+    )
+
+
+def _reingested_coverage(cell: str, step_m: float = _DECLARED_STEP_M) -> float:
+    """How much of the cell the reingested outline covers."""
+    truth = Polygon(plane_ring(cell)[1])
+    return float(_reingested(cell, step_m).intersection(truth).area) / _plane_area(cell)
+
+
+def _family_of(cell: str) -> str:
+    return str(itacart.cell_shape(cell))
+
+
+def test_the_declared_row_holds_six_cells_in_two_families() -> None:
+    """The population every figure below is measured over, enumerated.
+
+    Four cells sit in the last column, one per quadrant, and each absorbs
+    the border. Two are prime-meridian triangles and they exist in the
+    eastern quadrants only, because column zero is the meridian column and
+    the western quadrants do not have one. Six is the total, not a sample,
+    and the arithmetic that reaches it is written out so a later reading
+    cannot take four plus two for a coincidence.
+    """
+    cells = _cells_of_row(_DECLARED_ROW)
+    assert len(cells) == 6
+
+    by_family: dict[str, list[str]] = {}
+    for cell in cells:
+        by_family.setdefault(_family_of(cell), []).append(cell)
+    assert {name: len(group) for name, group in by_family.items()} == {
+        "trapezoid": 4,
+        "triangle": 2,
+    }
+
+    assert all(itacart.absorbs_border(cell) for cell in by_family["trapezoid"])
+    assert {cell[:2] for cell in by_family["trapezoid"]} == set(QUADRANTS)
+    assert {cell[:2] for cell in by_family["triangle"]} == {"NE", "SE"}
+    assert all(cell[3:7] == "0000" for cell in by_family["triangle"])
+    assert _columns("NW", _DECLARED_ROW) == _columns("SW", _DECLARED_ROW) == [1]
+
+
+def test_the_exported_ring_rebuilds_the_cell_in_the_plane() -> None:
+    """The exact route, and what makes it exact.
+
+    The exporter writes the cell's vertices and nothing between them: four
+    positions for a triangle, five for a parallelogram. Joined again in the
+    sinusoidal plane -- the plane the cell is defined in -- they rebuild
+    the cell to the last bit, on every cell of the row.
+
+    The ring length is asserted rather than assumed. If the exporter ever
+    samples along the plane edge before inverting the projection, this test
+    fails and says so, which is the only way that change becomes visible
+    from here.
+    """
+    for cell in _cells_of_row(_DECLARED_ROW):
+        collection = interop.cells_to_geojson(cell)
+        ring = collection["features"][0]["geometry"]["coordinates"][0]
+        assert len(ring) == (4 if _family_of(cell) == "triangle" else 5), cell
+        rebuilt = _rebuilt_in_the_plane(cell)
+        assert rebuilt.area == pytest.approx(_plane_area(cell), rel=1e-12), cell
+
+
+def test_the_recovered_index_is_carried_rather_than_computed() -> None:
+    """Identity survives the trip because it travels, not because it is read.
+
+    ``recover_from_geojson`` takes the index from the Feature, so the round
+    trip returns the same cell however the geometry was drawn. Saying the
+    route preserves identity without saying where the identity rode would
+    be a true claim with its scope left off.
+
+    The control is the second half: give a Feature the geometry of a cell
+    in another quadrant and the recovery is unchanged. A recovery that read
+    the coordinates would answer the other cell, and this test would fail.
+    """
+    cells = _cells_of_row(_DECLARED_ROW)
+    for cell in cells:
+        assert interop.recover_from_geojson(interop.cells_to_geojson(cell)) == [cell]
+
+    collection = interop.cells_to_geojson(cells[0])
+    stranger = next(cell for cell in cells if cell[:2] != cells[0][:2])
+    collection["features"][0]["geometry"] = interop.cells_to_geojson(stranger)[
+        "features"
+    ][0]["geometry"]
+    assert interop.recover_from_geojson(collection) == [cells[0]]
+
+
+def test_the_reingested_outline_covers_a_third_of_the_declared_row() -> None:
+    """The figures the module docstring declares, pinned by family.
+
+    Every number here is a reading of the instrument at
+    ``_DECLARED_STEP_M``; the step is named in the constant and in the
+    declaration. What does not depend on the step is the direction: the
+    reingested outline never covers the cell, on any cell of this row.
+
+    The four absorbers agree with each other exactly, and so do the two
+    triangles, because each family is one figure mirrored into its
+    quadrants. That agreement is asserted, so a defect that moved one
+    quadrant alone could not hide inside a family average.
+    """
+    measured: dict[str, list[float]] = {}
+    for cell in _cells_of_row(_DECLARED_ROW):
+        measured.setdefault(_family_of(cell), []).append(_reingested_coverage(cell))
+
+    for family, (count, declared) in _REINGESTED_COVERAGE.items():
+        values = measured[family]
+        assert len(values) == count, family
+        assert max(values) - min(values) == pytest.approx(0.0, abs=1e-12), family
+        assert values[0] == pytest.approx(declared, rel=1e-5), family
+        assert values[0] < 1.0, family
+
+
+def test_the_reingested_coverage_is_a_reading_of_its_step() -> None:
+    """A number out of a numerical instrument belongs to the instrument.
+
+    Refining the orthodromic step moves the coverage, so the declared
+    figures are pinned together with the figures the refinement converges
+    to, and the two are asserted to differ. Pinning only the first would
+    let a reader take it for a property of the grid; pinning only the
+    second would drop the number the declaration actually states.
+
+    A coarse step reads high, because it skips the part of the geodesic
+    that leaves the cell. Below one kilometre the reading settles.
+    """
+    for family, converged in _CONVERGED_COVERAGE.items():
+        cell = next(
+            cell for cell in _cells_of_row(_DECLARED_ROW) if _family_of(cell) == family
+        )
+        coarse = _reingested_coverage(cell, 10000.0)
+        declared = _reingested_coverage(cell, _DECLARED_STEP_M)
+        fine = _reingested_coverage(cell, 200.0)
+        finer = _reingested_coverage(cell, 50.0)
+        finest = _reingested_coverage(cell, 20.0)
+
+        assert coarse > declared > fine > finer, family
+        assert finer == pytest.approx(finest, abs=1e-4), family
+        assert finer == pytest.approx(converged, rel=1e-3), family
+        assert declared - converged > 5e-4, family
+
+
+def test_center_refuses_the_reingested_outline_only_on_the_declared_row() -> None:
+    """Where the refusal comes from, and where it does not.
+
+    Handed the reingested outline of one of these six, ``polyfill`` under
+    ``center`` raises rather than answering an empty cover: the figure that
+    comes back is narrower than a cell and holds no cell centre. Under
+    ``intersects`` the cell is in the answer, together with others the
+    outline touches.
+
+    The control is an ordinary cell, where the same route loses less than a
+    thousandth of the figure and ``center`` returns the cell itself. Without
+    it the refusal would read as a property of the route, and it is a
+    property of this row.
+    """
+    for cell in _cells_of_row(_DECLARED_ROW):
+        outline = itacart.cell_to_polygon(cell)
+        assert isinstance(outline, Polygon)
+        with pytest.raises(GeometryError, match="narrower than one cell"):
+            itacart.polyfill(outline, 1, containment="center")
+        touched = itacart.decompose(
+            itacart.polyfill(outline, 1, containment="intersects")
+        )
+        assert cell in touched, cell
+        assert len(touched) > 1, cell
+
+    for label, cell in (("interior", INTERIOR), ("equator", EQUATOR)):
+        outline = itacart.cell_to_polygon(cell)
+        assert isinstance(outline, Polygon)
+        resolution = itacart.get_resolution(cell)
+        assert _reingested_coverage(cell) > 0.999, label
+        filled = itacart.polyfill(outline, resolution, containment="center")
+        assert itacart.decompose(filled) == [cell], label
+
+
+# --------------------------------------------------------------------------
 # WKT
 # --------------------------------------------------------------------------
 

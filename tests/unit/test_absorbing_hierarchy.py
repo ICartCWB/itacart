@@ -21,6 +21,7 @@ nominal one and which is therefore the hardest case in the grid.
 
 from __future__ import annotations
 
+import statistics
 from collections.abc import Iterator
 from functools import lru_cache
 
@@ -55,11 +56,22 @@ ABSORBING_PARENTS = [
     "NE(0817/0747)",
 ]
 
-# The share of a parent's area that may stay uncovered, and the share of
-# a cell side squared that sibling interiors may share. Both match the
-# tolerances the enumeration itself proves against, so a test that passes
-# here is not passing on a slacker rule than the code applies.
-COVERAGE_TOLERANCE = 1e-6
+# Both match the tolerances the enumeration itself proves against, so a
+# test that passes here is not passing on a slacker rule than the code
+# applies.
+#
+# SHORTFALL_TOLERANCE is one-sided, and the name says so because the
+# reading it replaced did not. It bounds the share of a parent that its
+# children fail to reach, and it bounds nothing else: it does not say the
+# cover is exact, and it does not say the summed child area is any
+# particular multiple of the parent's. Both of those are false in this
+# family, because a child's chord reaches past its parent's -- the
+# subject of TestContainmentIsNotYetAProperty. Measured, the shortfall it
+# bounds runs to 1.1e-12 over the 572 lateral parents and 2.1e-16 under
+# the caps, six to fourteen orders of magnitude inside the bound; the
+# excess it ignores runs to 2.4 per cent. Widening this into a two-sided area
+# tolerance would let the excess pass as slack and is not what it is for.
+SHORTFALL_TOLERANCE = 1e-6
 OVERLAP_TOLERANCE = 1e-6
 
 
@@ -70,6 +82,44 @@ def _body(cell: str) -> Polygon:
     body = Polygon(ring)
     assert body.is_valid, f"{cell} has a self-intersecting effective ring"
     return body
+
+
+def _descendants(cell: str, resolution: int) -> set[str]:
+    """Every descendant of ``cell`` at ``resolution``, by refinement."""
+    family = {cell}
+    for _level in range(resolution - itacart.get_resolution(cell)):
+        family = {child for node in family for child in hy._children_of(node)}
+    return family
+
+
+def _fill_from_the_grid(cell: str, resolution: int, containment: str) -> set[str]:
+    """Fill ``cell`` from its own plane ring, through the real screen.
+
+    The fill takes a geodetic polygon, and sending the cell out through
+    longitude and back does not return the cell. So the prepared geometry
+    is built from ``plane_ring`` directly, which is what the descent tests
+    in the geometry module do for the same reason.
+    """
+    from itacart import geometry as gm
+
+    def prepared(_geometry: object, _resolution: int, densify: bool = True) -> object:
+        plane = Polygon(boundary.plane_ring(cell)[1])
+        views = [
+            (quadrant, gm._LatticeView(gm._to_lattice(piece, quadrant)))
+            for quadrant, piece in gm._quadrant_pieces(plane)
+        ]
+        return plane, views
+
+    original = gm._prepare
+    gm._prepare = prepared  # type: ignore[assignment]
+    try:
+        ignored = Polygon([(0.0, 0.0), (0.1, 0.0), (0.1, 0.1)])
+        filled = itacart.polyfill(
+            ignored, resolution, containment=containment, compact=False
+        )
+        return set(itacart.decompose(filled)) if filled else set()
+    finally:
+        gm._prepare = original  # type: ignore[assignment]
 
 
 def _outside_share(child: Polygon, parent: Polygon) -> float:
@@ -125,7 +175,7 @@ class TestTheContract:
         covered = sum(
             _body(child).intersection(body).area for child in hy._children_of(parent)
         )
-        assert body.area - covered <= COVERAGE_TOLERANCE * body.area
+        assert body.area - covered <= SHORTFALL_TOLERANCE * body.area
 
     @pytest.mark.parametrize("parent", ABSORBING_PARENTS)
     def test_every_child_resolves_back_to_this_parent(self, parent: str) -> None:
@@ -200,7 +250,7 @@ class TestThePolarCap:
         assert len(prefixes) == 3
 
         covered = sum(_body(child).intersection(body).area for child in children)
-        assert body.area - covered <= COVERAGE_TOLERANCE * body.area
+        assert body.area - covered <= SHORTFALL_TOLERANCE * body.area
 
     def test_the_cap_enumerates_symmetrically_east_and_west(self) -> None:
         """Property six, asserted on extents rather than on names.
@@ -229,7 +279,7 @@ class TestThePolarCap:
             body = _body(parent)
             children = hy._children_of(parent)
             covered = sum(_body(child).intersection(body).area for child in children)
-            assert body.area - covered <= COVERAGE_TOLERANCE * body.area
+            assert body.area - covered <= SHORTFALL_TOLERANCE * body.area
             counts.append(len(children))
             areas.append(round(body.area, 3))
         assert counts[0] == counts[1]
@@ -259,7 +309,7 @@ class TestTheFamilyAsAWhole:
                     for index, first in enumerate(rings)
                     for second in rings[index + 1 :]
                 )
-                assert body.area - covered <= COVERAGE_TOLERANCE * body.area, parent
+                assert body.area - covered <= SHORTFALL_TOLERANCE * body.area, parent
                 assert shared <= OVERLAP_TOLERANCE * body.area, parent
                 checked += 1
         assert checked > 500
@@ -326,9 +376,10 @@ class TestContainmentIsNotYetAProperty:
 
     @pytest.mark.slow
     def test_it_happens_across_the_family_and_stays_under_three_percent(self) -> None:
-        worst = 0.0
         parents = 0
         reaching = 0
+        shortfall = 0.0
+        leaving: list[float] = []
         for quadrant in ("NE", "NW", "SE", "SW"):
             for parent in _every_absorbing_cell_of(quadrant, 7):
                 body = _body(parent)
@@ -339,9 +390,35 @@ class TestContainmentIsNotYetAProperty:
                 parents += 1
                 if max(shares) > 1e-6:
                     reaching += 1
-                worst = max(worst, max(shares))
+                leaving.extend(share for share in shares if share > 1e-6)
+                covered = sum(
+                    _body(child).intersection(body).area
+                    for child in hy._children_of(parent)
+                )
+                shortfall = max(shortfall, (body.area - covered) / body.area)
+        # The population, declared beside the numbers that rest on it. The
+        # docstring quoted all four and only the bound was asserted, so a
+        # family that started losing a third child, or a stride that stopped
+        # reaching a quadrant, would have left the prose standing.
+        assert parents == 572
         assert reaching == parents
-        assert worst < 0.03
+        assert len(leaving) == 2 * parents == 1_144
+
+        leaving.sort()
+        assert statistics.median(leaving) == pytest.approx(0.00038142, rel=1e-3)
+        assert statistics.fmean(leaving) == pytest.approx(0.00056931, rel=1e-3)
+        assert leaving[int(0.9 * len(leaving))] == pytest.approx(0.00104096, rel=1e-3)
+        assert leaving[-1] == pytest.approx(0.02411015, rel=1e-3)
+        assert leaving[-1] < 0.03
+
+        # The other side of the same family, measured here so the excess
+        # above and the shortfall the criterion bounds are read off the
+        # same population. The reading belongs to that population: over a
+        # coarser stride of 160 parents it is 2.4e-13, and over these 572
+        # it is four times that. The bound is SHORTFALL_TOLERANCE, and
+        # both readings sit six orders of magnitude inside it.
+        assert shortfall < 1.2e-12
+        assert shortfall <= SHORTFALL_TOLERANCE
 
     def test_the_excess_is_the_chord_model_to_four_places(self) -> None:
         """The closed form, which is what a fix has to remove.
@@ -374,6 +451,86 @@ class TestContainmentIsNotYetAProperty:
             assert sagitta > 0.9, parent
             assert measured == pytest.approx(predicted, rel=1e-4), parent
 
+    def test_the_excess_is_quantized_to_one_cell_and_to_the_same_one_twice(
+        self,
+    ) -> None:
+        """Where a child leaves its parent, one cell still answers, always.
+
+        The population is the excess itself: the three parents this class
+        already names, the two children of each that leave, and one
+        position inside each sliver. It is deliberately not a sweep --
+        the question is whether a position that no parent ring holds has
+        a single settled owner, and six positions in three quadrants
+        answer it.
+
+        Two answers are asked for. At the child's own resolution the
+        owner is the child whose sliver it is, including the one spelled
+        under a stem a column east of its parent's. At the parent's
+        resolution the owner is the parent, although the position lies
+        outside the parent's effective ring: the absorbing cell claims
+        the strip its chord cuts off, and that claim is what makes the
+        choice total rather than merely consistent.
+
+        The second half is process state. A canonical choice could follow
+        from a cache warmed in one order or a set iterated in another, so
+        a fresh interpreter walks the same positions in reverse and has
+        to return the same owners. That is the form the cap quantizer's
+        determinism is already pinned in, reused here for the lateral
+        family rather than re-derived.
+        """
+        import json
+        import os
+        import subprocess
+        import sys
+
+        positions: list[tuple[float, float, int, str, str]] = []
+        for parent in ("SE(1930/0196)", "NE(1414/0500)", "SW(1845/0237)"):
+            whole = _body(parent)
+            for child in hy._children_of(parent):
+                excess = _body(child).difference(whole)
+                if excess.area <= 1e-6:
+                    continue
+                spot = excess.representative_point()
+                lon, lat = boundary.to_geodetic(spot.x, spot.y)
+                positions.append((lon, lat, 2, child, parent))
+
+        assert len(positions) == 6, "two children of each parent leave"
+
+        here: list[tuple[str, str]] = []
+        for lon, lat, resolution, child, parent in positions:
+            fine = itacart.geo_to_cell(lon, lat, resolution)
+            coarse = itacart.geo_to_cell(lon, lat, 1)
+            assert itacart.is_valid_cell(fine), (lon, lat)
+            assert itacart.is_valid_cell(coarse), (lon, lat)
+            assert fine == child
+            assert coarse == parent
+            assert not _body(parent).contains(Polygon(_body(child).exterior))
+            here.append((fine, coarse))
+
+        source = os.path.dirname(os.path.dirname(itacart.__file__))
+        script = (
+            "import json, sys\n"
+            "import itacart\n"
+            "positions = json.load(sys.stdin)\n"
+            "answers = [(itacart.geo_to_cell(lon, lat, fine),\n"
+            "            itacart.geo_to_cell(lon, lat, 1))\n"
+            "           for lon, lat, fine in reversed(positions)]\n"
+            "json.dump({'file': itacart.__file__, 'answers': answers[::-1]},\n"
+            "          sys.stdout)\n"
+        )
+        path = os.pathsep.join(filter(None, (source, os.environ.get("PYTHONPATH"))))
+        run = subprocess.run(
+            [sys.executable, "-c", script],
+            input=json.dumps([position[:3] for position in positions]),
+            capture_output=True,
+            text=True,
+            check=True,
+            env=dict(os.environ, PYTHONPATH=path),
+        )
+        there = json.loads(run.stdout)
+        assert there["file"] == itacart.__file__
+        assert [tuple(pair) for pair in there["answers"]] == here
+
     def test_the_measured_shares_stay_where_they_were_re_measured(self) -> None:
         """The four numbers the docstring quotes, over a smaller stride."""
         shares = []
@@ -391,12 +548,65 @@ class TestContainmentIsNotYetAProperty:
         assert 0.0003 < median < 0.0005
         assert max(shares) < 0.03
 
+    def test_a_query_bounded_by_the_border_drops_leaves_under_contains(
+        self,
+    ) -> None:
+        """The same approximation, seen from the query side.
+
+        ``contains`` tests the effective chordal ring, so a leaf whose ring
+        protrudes past the piece the query was clipped to is not kept, even
+        though the leaf is a descendant of the cell the query is. This is
+        not a second defect and it is not a defect of ``contains``: it is
+        the excess above, asked about from outside instead of from the
+        parent.
+
+        The query here is the parent's own effective ring, which is the
+        figure a caller gets when the region of interest stops at the
+        domain border. Row 300 in four quadrants, at resolutions 2 and 3,
+        with the count of leaves declared beside every figure so a green
+        line cannot stand on an empty one.
+
+        Under ``intersects`` the whole family comes back, which is the
+        control: it separates "the walk cannot reach these" from "this
+        acceptance rule declines them".
+        """
+        for quadrant in QUADRANTS:
+            side = CELL_SIZE_M[1]
+            assert side is not None
+            column = itacart.last_lattice_column(quadrant, 300, side)
+            parent = f"{quadrant}({column:04d}/{300:04d})"
+            assert boundary.is_valid_cell(parent) and boundary.absorbs_border(parent)
+
+            query = _body(parent)
+            for resolution, total, kept_count in ((2, 3, 1), (3, 63, 53)):
+                family = _descendants(parent, resolution)
+                assert len(family) == total, (parent, resolution)
+
+                kept = _fill_from_the_grid(parent, resolution, "contains")
+                assert len(kept) == kept_count, (parent, resolution)
+                assert kept <= family, (parent, resolution)
+
+                assert _fill_from_the_grid(parent, resolution, "intersects") == family
+
+                dropped = family - kept
+                protrusions = sorted(
+                    _body(leaf).area - _body(leaf).intersection(query).area
+                    for leaf in dropped
+                )
+                assert len(protrusions) == total - kept_count
+                assert min(protrusions) > 0.0, (parent, resolution)
+
     def test_the_polar_cap_does_not_have_this_defect(self) -> None:
         """The cap is clipped by the pole, not by the staircase border."""
         for parent in (CAP_SUBDIVISION, POLAR_TRIANGLE, EAST_TRAPEZOID, WEST_TRAPEZOID):
             body = _body(parent)
             for child in hy._children_of(parent):
                 assert _outside_share(_body(child), body) < 1e-6, child
+            covered = sum(
+                _body(child).intersection(body).area
+                for child in hy._children_of(parent)
+            )
+            assert (body.area - covered) / body.area < 2.2e-16, parent
 
 
 class TestFoldedSpellingsAreNotCells:
