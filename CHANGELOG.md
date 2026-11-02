@@ -3,7 +3,7 @@
 Format based on [Keep a Changelog](https://keepachangelog.com/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
-## [1.1.0] - 2026-10-28
+## [1.1.0] - 2026-10-30
 
 Three features: an integer for every cell, a region as ranges of those
 integers, and a format for data at every level of the tree. A measure joins
